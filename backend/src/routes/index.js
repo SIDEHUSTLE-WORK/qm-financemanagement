@@ -52,8 +52,46 @@ router.get('/students/balances', authenticate, checkPermission('students', 'read
 router.get('/students/classes', authenticate, studentController.getClasses);
 router.get('/students/:id', authenticate, checkPermission('students', 'read'), studentController.getById);
 router.get('/students/:id/balance', authenticate, checkPermission('students', 'read'), studentController.getBalance);
+router.get('/students/:id/payments', authenticate, checkPermission('students', 'read'), studentController.getPayments);
+router.post('/students/:id/payments', authenticate, checkPermission('income', 'create'), studentController.recordPayment);
 router.post('/students', authenticate, checkPermission('students', 'create'), studentValidation, studentController.create);
 router.put('/students/:id', authenticate, checkPermission('students', 'update'), studentValidation, studentController.update);
+
+// ==================== FEES ROUTES ====================
+router.get('/fees/payments/recent', authenticate, async (req, res) => {
+  try {
+    const payments = await prisma.income.findMany({
+      where: { 
+        schoolId: req.user.schoolId, 
+        isVoided: false,
+        studentId: { not: null }
+      },
+      include: {
+        student: { select: { firstName: true, lastName: true, studentNumber: true } },
+        category: { select: { name: true } }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 20
+    });
+
+    res.json({
+      success: true,
+      data: payments.map(p => ({
+        id: p.id,
+        receiptNumber: p.receiptNumber,
+        date: p.date,
+        amount: parseFloat(p.amount),
+        paymentMethod: p.paymentMethod,
+        description: p.description,
+        student: p.student,
+        categoryName: p.category?.name
+      }))
+    });
+  } catch (error) {
+    console.error('Recent payments error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch recent payments' });
+  }
+});
 
 // ==================== REPORT ROUTES ====================
 router.get('/reports', authenticate, checkPermission('reports', 'read'), reportController.getAll);

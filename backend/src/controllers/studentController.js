@@ -451,6 +451,184 @@ const getClasses = async (req, res) => {
   }
 };
 
+// Get student payment history
+const getPayments = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const payments = await prisma.income.findMany({
+      where: {
+        studentId: id,
+        isVoided: false
+      },
+      include: {
+        category: { select: { name: true } },
+        term: { select: { name: true } }
+      },
+      orderBy: { date: 'desc' },
+      take: 50
+    });
+
+    res.json({
+      success: true,
+      data: payments.map(p => ({
+        id: p.id,
+        receiptNumber: p.receiptNumber,
+        date: p.date,
+        amount: parseFloat(p.amount),
+        paymentMethod: p.paymentMethod,
+        description: p.description,
+        categoryName: p.category?.name,
+        term: p.term
+      }))
+    });
+  } catch (error) {
+    logger.error('Get student payments error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch payments' });
+  }
+};
+
+// Generate receipt number
+const generateReceiptNumber = async (schoolId) => {
+  const school = await prisma.school.findUnique({
+    where: { id: schoolId },
+    select: { code: true }
+  });
+  
+  const today = new Date();
+  const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
+  
+  const count = await prisma.income.count({
+    where: {
+      schoolId,
+      createdAt: {
+        gte: new Date(today.setHours(0, 0, 0, 0)),
+        lt: new Date(today.setHours(23, 59, 59, 999))
+      }
+    }
+  });
+  
+  return `${school?.code || 'RCP'}${dateStr}${String(count + 1).padStart(3, '0')}`;
+};
+
+// Record student fee payment
+const recordPayment = async (req, res) => {
+  try {
+    const { id: studentId } = req.params;
+    const { amount, paymentMethod, termId, description } = req.body;
+    const schoolId = req.user.schoolId;
+
+    // Verify student exists
+    const student = await prisma.student.findFirst({
+      where: { id: studentId, schoolId },
+      include: { class: true }
+    });
+
+    if (!student) {
+      return res.status(404).json({ success: false, message: 'Student not found' });
+    }
+
+    // Get School Fees category
+    let category = await prisma.incomeCategory.findFirst({
+      where: { schoolId, name: 'School Fees' }
+    });
+
+    if (!category) {
+      category = await prisma.incomeCategory.create({
+        data: {
+          schoolId,
+          name: 'School Fees',
+          isFeeRelated: true,
+          color: '#10B981'
+        }
+      });
+    }
+
+    // Get current term if not provided
+    let activeTermId = termId;
+    if (!activeTermId) {
+      const currentTerm = await prisma.academicTerm.findFirst({
+        where: { schoolId, isCurrent: true }
+      });
+      activeTermId = currentTerm?.id;
+    }
+
+    // Generate receipt number
+    const receiptNumber = await generateReceiptNumber(schoolId);
+
+    // Create income record
+    const income = await prisma.income.create({
+      data: {
+        schoolId,
+        receiptNumber,
+        date: new Date(),
+        categoryId: category.id,
+        studentId,
+        termId: activeTermId || null,
+        description: description || `School fees payment - ${student.firstName} ${student.lastName}`,
+        amount: parseFloat(amount),
+        paymentMethod: paymentMethod || 'cash',
+        receivedById: req.user.id
+      },
+      include: {
+        category: { select: { name: true } },
+        student: { select: { firstName: true, lastName: true, studentNumber: true } }
+      }
+    });
+
+    // Update student balance if term exists
+    if (activeTermId) {
+      await prisma.studentBalance.upsert({
+        where: {
+          studentId_termId: { studentId, termId: activeTermId }
+        },
+        update: {
+          amountPaid: { increment: parseFloat(amount) }
+        },
+        create: {
+          studentId,
+          termId: activeTermId,
+          totalFees: 0,
+          amountPaid: parseFloat(amount),
+          previousBalance: 0
+        }
+      });
+    }
+
+    // Audit log
+    await createAuditLog({
+      schoolId,
+      userId: req.user.id,
+      userName: req.user.fullName,
+      userRole: req.user.role,
+      action: 'CREATE',
+      entityType: 'fee_payment',
+      entityId: income.id,
+      description: `Fee payment: ${receiptNumber} - ${student.firstName} ${student.lastName} - ${amount}`,
+      newValues: { receiptNumber, amount, studentId, studentName: `${student.firstName} ${student.lastName}` },
+      ipAddress: req.ip,
+      userAgent: req.get('User-Agent')
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Payment recorded successfully',
+      data: {
+        id: income.id,
+        receiptNumber: income.receiptNumber,
+        date: income.date,
+        amount: parseFloat(income.amount),
+        paymentMethod: income.paymentMethod,
+        student: income.student,
+        category: income.category
+      }
+    });
+  } catch (error) {
+    logger.error('Record payment error:', error);
+    res.status(500).json({ success: false, message: 'Failed to record payment' });
+  }
+};
+
 module.exports = {
   getAll,
   search,
@@ -459,5 +637,7 @@ module.exports = {
   getAllWithBalances,
   create,
   update,
-  getClasses
+  getClasses,
+  getPayments,
+  recordPayment
 };
