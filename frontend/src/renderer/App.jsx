@@ -109,17 +109,24 @@ const SchoolFinanceApp = () => {
         api.get('/income/categories'),
         api.get('/expenses/categories')
       ]);
-      if (incomeRes.success) setApiIncomeCategories(incomeRes.data);
-      if (expenseRes.success) setApiExpenseCategories(expenseRes.data);
+      if (incomeRes.success) {
+        const incomeData = Array.isArray(incomeRes.data) ? incomeRes.data : (incomeRes.data?.categories || []);
+        setApiIncomeCategories(incomeData);
+      }
+      if (expenseRes.success) {
+        const expenseData = Array.isArray(expenseRes.data) ? expenseRes.data : (expenseRes.data?.categories || []);
+        setApiExpenseCategories(expenseData);
+      }
     } catch (error) {
       console.error('Error loading categories:', error);
     }
   };
-
-  const loadIncomeFromAPI = async () => {
+ const loadIncomeFromAPI = async () => {
     const res = await api.get('/income');
     if (res.success) {
-      const mapped = res.data.map(item => ({
+      // Handle both array and nested object response
+      const dataArray = Array.isArray(res.data) ? res.data : (res.data?.entries || res.data?.items || []);
+      const mapped = dataArray.map(item => ({
         id: item.id,
         date: item.date?.split('T')[0],
         category: item.category?.name || 'Unknown',
@@ -138,7 +145,9 @@ const SchoolFinanceApp = () => {
   const loadExpensesFromAPI = async () => {
     const res = await api.get('/expenses');
     if (res.success) {
-      const mapped = res.data.map(item => ({
+      // Handle both array and nested object response
+      const dataArray = Array.isArray(res.data) ? res.data : (res.data?.entries || res.data?.items || []);
+      const mapped = dataArray.map(item => ({
         id: item.id,
         date: item.date?.split('T')[0],
         category: item.category?.name || 'Unknown',
@@ -149,7 +158,6 @@ const SchoolFinanceApp = () => {
       setExpenseEntries(mapped);
     }
   };
-
   const logAction = (action, type, details) => {
     const log = {
       id: Date.now(),
