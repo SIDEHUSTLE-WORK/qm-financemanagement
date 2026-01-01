@@ -2768,6 +2768,16 @@ const SchoolFinanceApp = () => {
       totalFees: '',
       isActive: true
     });
+    
+    // Promote Students States
+    const [showPromoteModal, setShowPromoteModal] = useState(false);
+    const [promoteFromClass, setPromoteFromClass] = useState('');
+    const [promoteToClass, setPromoteToClass] = useState('');
+    const [studentsToPromote, setStudentsToPromote] = useState([]);
+    const [selectedForPromotion, setSelectedForPromotion] = useState([]);
+    const [carryForwardBalance, setCarryForwardBalance] = useState(true);
+    const [newTermFees, setNewTermFees] = useState('');
+    const [promotingInProgress, setPromotingInProgress] = useState(false);
 
     useEffect(() => {
       loadStudents();
@@ -2846,6 +2856,86 @@ const SchoolFinanceApp = () => {
       });
       setEditingStudent(student);
     };
+    
+    // Load students for promotion preview
+    const loadStudentsForPromotion = async (classId) => {
+      if (!classId) {
+        setStudentsToPromote([]);
+        return;
+      }
+      
+      const res = await api.get(`/students?classId=${classId}&status=active`);
+      if (res.success) {
+        const data = res.data?.students || res.data || [];
+        setStudentsToPromote(data);
+        setSelectedForPromotion(data.map(s => s.id)); // Select all by default
+      }
+    };
+
+    const handlePromoteStudents = async () => {
+      if (!promoteFromClass || !promoteToClass) {
+        alert('Please select both source and destination classes');
+        return;
+      }
+      
+      if (promoteFromClass === promoteToClass) {
+        alert('Source and destination classes cannot be the same');
+        return;
+      }
+      
+      if (selectedForPromotion.length === 0) {
+        alert('Please select at least one student to promote');
+        return;
+      }
+
+      const fromClassName = classes.find(c => c.id === promoteFromClass)?.name;
+      const toClassName = classes.find(c => c.id === promoteToClass)?.name;
+      
+      if (!confirm(`Are you sure you want to promote ${selectedForPromotion.length} students from ${fromClassName} to ${toClassName}?`)) {
+        return;
+      }
+
+      setPromotingInProgress(true);
+      
+      const res = await api.post('/students/promote', {
+        fromClassId: promoteFromClass,
+        toClassId: promoteToClass,
+        studentIds: selectedForPromotion,
+        carryForwardBalance: carryForwardBalance,
+        newTermFees: newTermFees ? parseFloat(newTermFees) : null
+      });
+
+      setPromotingInProgress(false);
+
+      if (res.success) {
+        alert(`Successfully promoted ${res.data.summary.successful} students!\n\n${res.data.summary.failed > 0 ? `Failed: ${res.data.summary.failed}` : ''}`);
+        setShowPromoteModal(false);
+        setPromoteFromClass('');
+        setPromoteToClass('');
+        setStudentsToPromote([]);
+        setSelectedForPromotion([]);
+        setNewTermFees('');
+        loadStudents();
+      } else {
+        alert(res.message || 'Failed to promote students');
+      }
+    };
+
+    const toggleStudentSelection = (studentId) => {
+      setSelectedForPromotion(prev => 
+        prev.includes(studentId) 
+          ? prev.filter(id => id !== studentId)
+          : [...prev, studentId]
+      );
+    };
+
+    const toggleAllStudents = () => {
+      if (selectedForPromotion.length === studentsToPromote.length) {
+        setSelectedForPromotion([]);
+      } else {
+        setSelectedForPromotion(studentsToPromote.map(s => s.id));
+      }
+    };
 
     const updateStudent = async () => {
       if (!editStudentForm.firstName || !editStudentForm.lastName) {
@@ -2887,13 +2977,22 @@ const SchoolFinanceApp = () => {
       <div className="space-y-6">
         <div className="flex justify-between items-center">
           <h2 className="text-3xl font-bold text-gray-800">Students Management</h2>
-          <button
-            onClick={() => setShowAddForm(!showAddForm)}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium flex items-center gap-2"
-          >
-            <Plus className="w-5 h-5" />
-            Add New Student
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={() => setShowPromoteModal(true)}
+              className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded-lg font-medium flex items-center gap-2"
+            >
+              <TrendingUp className="w-5 h-5" />
+              Promote Students
+            </button>
+            <button
+              onClick={() => setShowAddForm(!showAddForm)}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium flex items-center gap-2"
+            >
+              <Plus className="w-5 h-5" />
+              Add New Student
+            </button>
+          </div>
         </div>
 
         {showAddForm && (
@@ -3086,6 +3185,172 @@ const SchoolFinanceApp = () => {
           )}
         </div>
 
+
+
+
+{/* Promote Students Modal */}
+        {showPromoteModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl shadow-xl p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-2xl font-bold text-gray-800">🎓 Promote Students</h3>
+                <button onClick={() => setShowPromoteModal(false)} className="text-gray-500 hover:text-gray-700">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              {/* Class Selection */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">From Class (Current)</label>
+                  <select
+                    value={promoteFromClass}
+                    onChange={(e) => {
+                      setPromoteFromClass(e.target.value);
+                      loadStudentsForPromotion(e.target.value);
+                    }}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:outline-none text-lg"
+                  >
+                    <option value="">Select Source Class</option>
+                    {classes.map(cls => (
+                      <option key={cls.id} value={cls.id}>{cls.name} ({cls.studentCount} students)</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">To Class (Destination)</label>
+                  <select
+                    value={promoteToClass}
+                    onChange={(e) => setPromoteToClass(e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:outline-none text-lg"
+                  >
+                    <option value="">Select Destination Class</option>
+                    {classes.filter(c => c.id !== promoteFromClass).map(cls => (
+                      <option key={cls.id} value={cls.id}>{cls.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Options */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6 p-4 bg-gray-50 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    id="carryBalance"
+                    checked={carryForwardBalance}
+                    onChange={(e) => setCarryForwardBalance(e.target.checked)}
+                    className="w-5 h-5 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
+                  />
+                  <label htmlFor="carryBalance" className="text-sm font-medium text-gray-700">
+                    Carry forward outstanding balances
+                  </label>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">New Term Fees (Optional)</label>
+                  <input
+                    type="number"
+                    value={newTermFees}
+                    onChange={(e) => setNewTermFees(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:outline-none"
+                    placeholder="Set new fees for all promoted students"
+                  />
+                </div>
+              </div>
+
+              {/* Students Preview */}
+              {studentsToPromote.length > 0 && (
+                <div className="mb-6">
+                  <div className="flex justify-between items-center mb-3">
+                    <h4 className="font-bold text-gray-800">
+                      Students to Promote ({selectedForPromotion.length}/{studentsToPromote.length} selected)
+                    </h4>
+                    <button
+                      onClick={toggleAllStudents}
+                      className="text-purple-600 hover:text-purple-700 text-sm font-medium"
+                    >
+                      {selectedForPromotion.length === studentsToPromote.length ? 'Deselect All' : 'Select All'}
+                    </button>
+                  </div>
+                  
+                  <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg">
+                    <table className="w-full">
+                      <thead className="bg-gray-100 sticky top-0">
+                        <tr>
+                          <th className="py-2 px-3 text-left text-sm font-semibold text-gray-700">Select</th>
+                          <th className="py-2 px-3 text-left text-sm font-semibold text-gray-700">Student No</th>
+                          <th className="py-2 px-3 text-left text-sm font-semibold text-gray-700">Name</th>
+                          <th className="py-2 px-3 text-left text-sm font-semibold text-gray-700">Guardian</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {studentsToPromote.map(student => (
+                          <tr 
+                            key={student.id} 
+                            className={`border-b hover:bg-gray-50 cursor-pointer ${selectedForPromotion.includes(student.id) ? 'bg-purple-50' : ''}`}
+                            onClick={() => toggleStudentSelection(student.id)}
+                          >
+                            <td className="py-2 px-3">
+                              <input
+                                type="checkbox"
+                                checked={selectedForPromotion.includes(student.id)}
+                                onChange={() => toggleStudentSelection(student.id)}
+                                onClick={(e) => e.stopPropagation()}
+                                className="w-4 h-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
+                              />
+                            </td>
+                            <td className="py-2 px-3 text-sm font-medium text-blue-600">{student.studentNumber}</td>
+                            <td className="py-2 px-3 text-sm text-gray-800">{student.firstName} {student.lastName}</td>
+                            <td className="py-2 px-3 text-sm text-gray-600">{student.guardianName || student.parentName || 'N/A'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* No students message */}
+              {promoteFromClass && studentsToPromote.length === 0 && (
+                <div className="text-center py-8 text-gray-500 bg-gray-50 rounded-lg mb-6">
+                  No active students found in this class
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="flex gap-3">
+                <button
+                  onClick={handlePromoteStudents}
+                  disabled={promotingInProgress || selectedForPromotion.length === 0 || !promoteFromClass || !promoteToClass}
+                  className={`flex-1 px-6 py-3 rounded-lg font-bold text-lg flex items-center justify-center gap-2 ${
+                    promotingInProgress || selectedForPromotion.length === 0 || !promoteFromClass || !promoteToClass
+                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                      : 'bg-purple-600 hover:bg-purple-700 text-white'
+                  }`}
+                >
+                  {promotingInProgress ? (
+                    <>
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                      Promoting...
+                    </>
+                  ) : (
+                    <>
+                      <TrendingUp className="w-5 h-5" />
+                      Promote {selectedForPromotion.length} Students
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={() => setShowPromoteModal(false)}
+                  className="px-6 py-3 bg-gray-300 hover:bg-gray-400 text-gray-800 rounded-lg font-medium"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        
         {/* Edit Student Modal */}
         {editingStudent && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
