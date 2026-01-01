@@ -4,7 +4,43 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
 
-  const SchoolFinanceApp = () => {
+ // ==================== API CONFIGURATION ====================
+const API_URL = 'https://qm-financemanagement-production.up.railway.app/api';
+
+const api = {
+  getHeaders: () => ({
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${localStorage.getItem('qm_access_token')}`
+  }),
+
+  async request(endpoint, options = {}) {
+    try {
+      const response = await fetch(`${API_URL}${endpoint}`, {
+        ...options,
+        headers: this.getHeaders()
+      });
+      
+      if (response.status === 401) {
+        localStorage.removeItem('qm_access_token');
+        localStorage.removeItem('qm_current_user');
+        window.location.reload();
+        return { success: false };
+      }
+      
+      return response.json();
+    } catch (error) {
+      console.error('API Error:', error);
+      return { success: false, message: 'Network error' };
+    }
+  },
+
+  get: (endpoint) => api.request(endpoint, { method: 'GET' }),
+  post: (endpoint, body) => api.request(endpoint, { method: 'POST', body: JSON.stringify(body) }),
+  put: (endpoint, body) => api.request(endpoint, { method: 'PUT', body: JSON.stringify(body) }),
+  delete: (endpoint) => api.request(endpoint, { method: 'DELETE' })
+};
+
+const SchoolFinanceApp = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
   const [loginUsername, setLoginUsername] = useState('');
@@ -27,6 +63,10 @@ import 'jspdf-autotable';
   
   const [editingIncome, setEditingIncome] = useState(null);
   const [editingExpense, setEditingExpense] = useState(null);
+  
+  // API Categories State
+  const [apiIncomeCategories, setApiIncomeCategories] = useState([]);
+  const [apiExpenseCategories, setApiExpenseCategories] = useState([]);
   
   const [incomeSearchTerm, setIncomeSearchTerm] = useState('');
   const [expenseSearchTerm, setExpenseSearchTerm] = useState('');
@@ -62,6 +102,54 @@ import 'jspdf-autotable';
   const paymentMethods = ['Cash', 'Mobile Money', 'School Pay', 'Bank Transfer'];
   
   
+  // ==================== API DATA LOADING FUNCTIONS ====================
+  const loadCategoriesFromAPI = async () => {
+    try {
+      const [incomeRes, expenseRes] = await Promise.all([
+        api.get('/income/categories'),
+        api.get('/expenses/categories')
+      ]);
+      if (incomeRes.success) setApiIncomeCategories(incomeRes.data);
+      if (expenseRes.success) setApiExpenseCategories(expenseRes.data);
+    } catch (error) {
+      console.error('Error loading categories:', error);
+    }
+  };
+
+  const loadIncomeFromAPI = async () => {
+    const res = await api.get('/income');
+    if (res.success) {
+      const mapped = res.data.map(item => ({
+        id: item.id,
+        date: item.date?.split('T')[0],
+        category: item.category?.name || 'Unknown',
+        categoryId: item.categoryId,
+        description: item.description,
+        amount: parseFloat(item.amount),
+        receiptNo: item.receiptNumber,
+        paymentMethod: item.paymentMethod?.replace('_', ' ').toUpperCase() || 'Cash',
+        studentName: item.student?.fullName || '',
+        studentId: item.studentId
+      }));
+      setIncomeEntries(mapped);
+    }
+  };
+
+  const loadExpensesFromAPI = async () => {
+    const res = await api.get('/expenses');
+    if (res.success) {
+      const mapped = res.data.map(item => ({
+        id: item.id,
+        date: item.date?.split('T')[0],
+        category: item.category?.name || 'Unknown',
+        categoryId: item.categoryId,
+        description: item.description,
+        amount: parseFloat(item.amount)
+      }));
+      setExpenseEntries(mapped);
+    }
+  };
+
   const logAction = (action, type, details) => {
     const log = {
       id: Date.now(),
@@ -77,6 +165,8 @@ import 'jspdf-autotable';
     existingLogs.push(log);
     localStorage.setItem('qm_audit_logs', JSON.stringify(existingLogs));
   };
+
+  
 
   useEffect(() => {
     const initializeApp = async () => {
@@ -106,11 +196,16 @@ import 'jspdf-autotable';
       }
 
       const savedUser = localStorage.getItem('qm_current_user');
-      if (savedUser) {
+     if (savedUser) {
         const userData = JSON.parse(savedUser);
         setCurrentUser(userData);
         setUser({ name: userData.name, role: userData.role });
         setIsAuthenticated(true);
+        
+        // Load data from API
+        await loadCategoriesFromAPI();
+        await loadIncomeFromAPI();
+        await loadExpensesFromAPI();
       }
       
       if (window.electronAPI) {
@@ -227,34 +322,42 @@ import 'jspdf-autotable';
       alert('Please fill in all required fields');
       return;
     }
-    
-    const receiptNo = `QM${String(receiptCounter).padStart(4, '0')}`;
-    const entry = {
+
+    // Find category ID from API categories
+    const category = apiIncomeCategories.find(c => c.name === form.category);
+    if (!category) {
+      alert('Please select a valid category');
+      return;
+    }
+
+    // Call API
+    const res = await api.post('/income', {
       date: form.date,
-      category: form.category,
+      categoryId: category.id,
       description: form.description,
       amount: Number(form.amount),
-      receiptNo: receiptNo,
+      paymentMethod: form.paymentMethod.toLowerCase().replace(' ', '_'),
+      studentId: form.studentId || null
+    });
+
+    if (!res.success) {
+      alert(res.message || 'Error saving income');
+      return;
+    }
+
+    // Map API response to local format
+    const entry = {
+      id: res.data.id,
+      date: res.data.date?.split('T')[0],
+      category: res.data.category?.name || form.category,
+      description: res.data.description,
+      amount: parseFloat(res.data.amount),
+      receiptNo: res.data.receiptNumber,
       paymentMethod: form.paymentMethod,
-      studentName: form.studentName || ''
+      studentName: res.data.student?.fullName || form.studentName || ''
     };
     
-    if (isElectron) {
-      try {
-        const id = await window.electronAPI.addIncome(entry);
-        entry.id = id;
-        await window.electronAPI.setReceiptCounter(receiptCounter + 1);
-      } catch (error) {
-        console.error('Error saving income:', error);
-        alert('Error saving income to database');
-        return;
-      }
-    } else {
-      entry.id = Date.now();
-    }
-    
-    setIncomeEntries(prev => [...prev, entry]);
-    setReceiptCounter(prev => prev + 1);
+    setIncomeEntries(prev => [entry, ...prev]);
     
     incomeFormRef.current = {
       date: new Date().toISOString().split('T')[0],
@@ -262,11 +365,15 @@ import 'jspdf-autotable';
       description: '',
       amount: '',
       paymentMethod: 'Cash',
-      studentName: ''
+      studentName: '',
+      studentId: ''
     };
-    logAction('ADD', 'INCOME', `Added ${entry.category}: ${entry.description} - ${formatCurrency(entry.amount)} (Receipt: ${receiptNo})`);
+    
+    logAction('ADD', 'INCOME', `Added ${entry.category}: ${entry.description} - ${formatCurrency(entry.amount)} (Receipt: ${entry.receiptNo})`);
     rerender();
     
+    // Auto-print receipt
+    printReceipt(entry);
   };
 
   const addExpense = async () => {
@@ -276,28 +383,36 @@ import 'jspdf-autotable';
       alert('Please fill in all required fields');
       return;
     }
-    
-    const entry = {
+
+    // Find category ID from API categories
+    const category = apiExpenseCategories.find(c => c.name === form.category);
+    if (!category) {
+      alert('Please select a valid category');
+      return;
+    }
+
+    // Call API
+    const res = await api.post('/expenses', {
       date: form.date,
-      category: form.category,
+      categoryId: category.id,
       description: form.description,
       amount: Number(form.amount)
+    });
+
+    if (!res.success) {
+      alert(res.message || 'Error saving expense');
+      return;
+    }
+
+    const entry = {
+      id: res.data.id,
+      date: res.data.date?.split('T')[0],
+      category: res.data.category?.name || form.category,
+      description: res.data.description,
+      amount: parseFloat(res.data.amount)
     };
     
-    if (isElectron) {
-      try {
-        const id = await window.electronAPI.addExpense(entry);
-        entry.id = id;
-      } catch (error) {
-        console.error('Error saving expense:', error);
-        alert('Error saving expense to database');
-        return;
-      }
-    } else {
-      entry.id = Date.now();
-    }
-    
-    setExpenseEntries(prev => [...prev, entry]);
+    setExpenseEntries(prev => [entry, ...prev]);
     
     expenseFormRef.current = {
       date: new Date().toISOString().split('T')[0],
@@ -305,10 +420,12 @@ import 'jspdf-autotable';
       description: '',
       amount: ''
     };
+    
+    logAction('ADD', 'EXPENSE', `Added ${entry.category}: ${entry.description} - ${formatCurrency(entry.amount)}`);
     rerender();
   };
 
-  const updateIncome = async () => {
+ const updateIncome = async () => {
     const entry = editIncomeRef.current;
     
     if (!entry.amount || !entry.description) {
@@ -316,14 +433,22 @@ import 'jspdf-autotable';
       return;
     }
     
-    if (isElectron) {
-      try {
-        await window.electronAPI.updateIncome(entry.id, entry);
-      } catch (error) {
-        console.error('Error updating income:', error);
-        alert('Error updating income in database');
-        return;
-      }
+    // Find category ID from API categories
+    const category = apiIncomeCategories.find(c => c.name === entry.category);
+    
+    // Call API to update
+    const res = await api.put(`/income/${entry.id}`, {
+      date: entry.date,
+      categoryId: category?.id || entry.categoryId,
+      description: entry.description,
+      amount: Number(entry.amount),
+      paymentMethod: entry.paymentMethod?.toLowerCase().replace(' ', '_') || 'cash',
+      studentId: entry.studentId || null
+    });
+
+    if (!res.success) {
+      alert(res.message || 'Error updating income');
+      return;
     }
     
     setIncomeEntries(prev => prev.map(e => 
@@ -341,14 +466,20 @@ import 'jspdf-autotable';
       return;
     }
     
-    if (isElectron) {
-      try {
-        await window.electronAPI.updateExpense(entry.id, entry);
-      } catch (error) {
-        console.error('Error updating expense:', error);
-        alert('Error updating expense in database');
-        return;
-      }
+    // Find category ID from API categories
+    const category = apiExpenseCategories.find(c => c.name === entry.category);
+    
+    // Call API to update
+    const res = await api.put(`/expenses/${entry.id}`, {
+      date: entry.date,
+      categoryId: category?.id || entry.categoryId,
+      description: entry.description,
+      amount: Number(entry.amount)
+    });
+
+    if (!res.success) {
+      alert(res.message || 'Error updating expense');
+      return;
     }
     
     setExpenseEntries(prev => prev.map(e => 
@@ -359,43 +490,39 @@ import 'jspdf-autotable';
   };
 
   const deleteIncome = async (id) => {
-    if (!confirm('Are you sure you want to delete this income entry?')) {
+    if (!confirm('Are you sure you want to void this income entry?')) {
       return;
     }
     
-    if (isElectron) {
-      try {
-        await window.electronAPI.deleteIncome(id);
-      } catch (error) {
-        console.error('Error deleting income:', error);
-        alert('Error deleting income from database');
-        return;
-      }
+    const deletedEntry = incomeEntries.find(e => e.id === id);
+    
+    // Call API to void
+    const res = await api.post(`/income/${id}/void`, {});
+    if (!res.success) {
+      alert(res.message || 'Error voiding income');
+      return;
     }
     
     setIncomeEntries(prev => prev.filter(e => e.id !== id));
-    const deletedEntry = incomeEntries.find(e => e.id === id);
-logAction('DELETE', 'INCOME', `Deleted ${deletedEntry.category}: ${deletedEntry.description} - ${formatCurrency(deletedEntry.amount)} (Receipt: ${deletedEntry.receiptNo})`);
+    logAction('DELETE', 'INCOME', `Voided ${deletedEntry?.category}: ${deletedEntry?.description} - ${formatCurrency(deletedEntry?.amount)} (Receipt: ${deletedEntry?.receiptNo})`);
   };
 
   const deleteExpense = async (id) => {
-    if (!confirm('Are you sure you want to delete this expense entry?')) {
+    if (!confirm('Are you sure you want to void this expense entry?')) {
       return;
     }
     
-    if (isElectron) {
-      try {
-        await window.electronAPI.deleteExpense(id);
-      } catch (error) {
-        console.error('Error deleting expense:', error);
-        alert('Error deleting expense from database');
-        return;
-      }
+    const deletedEntry = expenseEntries.find(e => e.id === id);
+    
+    // Call API to void
+    const res = await api.post(`/expenses/${id}/void`, {});
+    if (!res.success) {
+      alert(res.message || 'Error voiding expense');
+      return;
     }
     
     setExpenseEntries(prev => prev.filter(e => e.id !== id));
-    const deletedEntry = expenseEntries.find(e => e.id === id);
-logAction('DELETE', 'EXPENSE', `Deleted ${deletedEntry.category}: ${deletedEntry.description} - ${formatCurrency(deletedEntry.amount)}`);
+    logAction('DELETE', 'EXPENSE', `Voided ${deletedEntry?.category}: ${deletedEntry?.description} - ${formatCurrency(deletedEntry?.amount)}`);
   };
 
   const formatCurrency = (amount) => {
