@@ -318,10 +318,11 @@ const getAllWithBalances = async (req, res) => {
 const create = async (req, res) => {
   try {
     const studentNumber = await generateStudentNumber(req.user.schoolId);
+    const schoolId = req.user.schoolId;
 
     const student = await prisma.student.create({
       data: {
-        schoolId: req.user.schoolId,
+        schoolId,
         studentNumber,
         firstName: req.body.firstName,
         lastName: req.body.lastName,
@@ -329,10 +330,10 @@ const create = async (req, res) => {
         dateOfBirth: req.body.dateOfBirth ? new Date(req.body.dateOfBirth) : null,
         gender: req.body.gender || null,
         classId: req.body.classId || null,
-        parentName: req.body.parentName || null,
-        parentPhone: req.body.parentPhone || null,
+        parentName: req.body.guardianName || req.body.parentName || null,
+        parentPhone: req.body.guardianPhone || req.body.parentPhone || null,
         parentPhoneAlt: req.body.parentPhoneAlt || null,
-        parentEmail: req.body.parentEmail || null,
+        parentEmail: req.body.guardianEmail || req.body.parentEmail || null,
         address: req.body.address || null,
         previousSchool: req.body.previousSchool || null,
         medicalInfo: req.body.medicalInfo || null,
@@ -340,15 +341,35 @@ const create = async (req, res) => {
       }
     });
 
+    // Create StudentBalance with totalFees if provided
+    if (req.body.totalFees && parseFloat(req.body.totalFees) > 0) {
+      // Get current term
+      const currentTerm = await prisma.academicTerm.findFirst({
+        where: { schoolId, isCurrent: true }
+      });
+
+      if (currentTerm) {
+        await prisma.studentBalance.create({
+          data: {
+            studentId: student.id,
+            termId: currentTerm.id,
+            totalFees: parseFloat(req.body.totalFees),
+            amountPaid: 0,
+            previousBalance: 0
+          }
+        });
+      }
+    }
+
     await createAuditLog({
-      schoolId: req.user.schoolId,
+      schoolId,
       userId: req.user.id,
       userName: req.user.fullName,
       userRole: req.user.role,
       action: 'CREATE',
       entityType: 'student',
       entityId: student.id,
-      description: `Created student: ${student.firstName} ${student.lastName} (${studentNumber})`,
+      description: `Created student: ${student.firstName} ${student.lastName} (${studentNumber})${req.body.totalFees ? ` with fees: ${req.body.totalFees}` : ''}`,
       newValues: student,
       ipAddress: req.ip,
       userAgent: req.get('User-Agent')
@@ -369,9 +390,10 @@ const create = async (req, res) => {
 const update = async (req, res) => {
   try {
     const { id } = req.params;
+    const schoolId = req.user.schoolId;
 
     const existing = await prisma.student.findFirst({
-      where: { id, schoolId: req.user.schoolId }
+      where: { id, schoolId }
     });
 
     if (!existing) {
@@ -386,11 +408,11 @@ const update = async (req, res) => {
         otherNames: req.body.otherNames,
         dateOfBirth: req.body.dateOfBirth ? new Date(req.body.dateOfBirth) : null,
         gender: req.body.gender,
-        classId: req.body.classId,
-        parentName: req.body.parentName,
-        parentPhone: req.body.parentPhone,
+        classId: req.body.classId || null,
+        parentName: req.body.guardianName || req.body.parentName,
+        parentPhone: req.body.guardianPhone || req.body.parentPhone,
         parentPhoneAlt: req.body.parentPhoneAlt,
-        parentEmail: req.body.parentEmail,
+        parentEmail: req.body.guardianEmail || req.body.parentEmail,
         address: req.body.address,
         medicalInfo: req.body.medicalInfo,
         notes: req.body.notes,
@@ -398,15 +420,40 @@ const update = async (req, res) => {
       }
     });
 
+    // Update StudentBalance totalFees if provided
+    if (req.body.totalFees !== undefined) {
+      const currentTerm = await prisma.academicTerm.findFirst({
+        where: { schoolId, isCurrent: true }
+      });
+
+      if (currentTerm) {
+        await prisma.studentBalance.upsert({
+          where: {
+            studentId_termId: { studentId: id, termId: currentTerm.id }
+          },
+          update: {
+            totalFees: parseFloat(req.body.totalFees)
+          },
+          create: {
+            studentId: id,
+            termId: currentTerm.id,
+            totalFees: parseFloat(req.body.totalFees),
+            amountPaid: 0,
+            previousBalance: 0
+          }
+        });
+      }
+    }
+
     await createAuditLog({
-      schoolId: req.user.schoolId,
+      schoolId,
       userId: req.user.id,
       userName: req.user.fullName,
       userRole: req.user.role,
       action: 'UPDATE',
       entityType: 'student',
       entityId: id,
-      description: `Updated student: ${updated.firstName} ${updated.lastName}`,
+      description: `Updated student: ${updated.firstName} ${updated.lastName}${req.body.totalFees ? ` (Fees: ${req.body.totalFees})` : ''}`,
       oldValues: existing,
       newValues: updated,
       ipAddress: req.ip,
@@ -577,8 +624,9 @@ const recordPayment = async (req, res) => {
     });
 
     // Update student balance if term exists
+    let updatedBalance = null;
     if (activeTermId) {
-      await prisma.studentBalance.upsert({
+      updatedBalance = await prisma.studentBalance.upsert({
         where: {
           studentId_termId: { studentId, termId: activeTermId }
         },
@@ -594,6 +642,11 @@ const recordPayment = async (req, res) => {
         }
       });
     }
+
+    // Calculate remaining balance
+    const remainingBalance = updatedBalance 
+      ? parseFloat(updatedBalance.totalFees) + parseFloat(updatedBalance.previousBalance) - parseFloat(updatedBalance.amountPaid)
+      : 0;
 
     // Audit log
     await createAuditLog({
@@ -620,7 +673,13 @@ const recordPayment = async (req, res) => {
         amount: parseFloat(income.amount),
         paymentMethod: income.paymentMethod,
         student: income.student,
-        category: income.category
+        category: income.category,
+        balance: {
+          totalFees: updatedBalance ? parseFloat(updatedBalance.totalFees) : 0,
+          amountPaid: updatedBalance ? parseFloat(updatedBalance.amountPaid) : parseFloat(amount),
+          previousBalance: updatedBalance ? parseFloat(updatedBalance.previousBalance) : 0,
+          remaining: remainingBalance
+        }
       }
     });
   } catch (error) {
