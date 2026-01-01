@@ -651,20 +651,48 @@ logAction('DELETE', 'EXPENSE', `Deleted ${deletedEntry.category}: ${deletedEntry
   };
 
 
-  const handleLogin = (e) => {
+ const handleLogin = async (e) => {
     e.preventDefault();
     setLoginError('');
     
-    const users = JSON.parse(localStorage.getItem('qm_users') || '[]');
-    const foundUser = users.find(u => u.username === loginUsername && u.password === loginPassword);
-    
-    if (foundUser) {
-      setCurrentUser(foundUser);
-      setUser({ name: foundUser.name, role: foundUser.role });
-      localStorage.setItem('qm_current_user', JSON.stringify(foundUser));
-      setIsAuthenticated(true);
-    } else {
-      setLoginError('Invalid username or password');
+    try {
+      const response = await fetch('https://qm-financemanagement-production.up.railway.app/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          username: loginUsername.toLowerCase(), 
+          password: loginPassword 
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        localStorage.setItem('qm_access_token', data.data.tokens.accessToken);
+        localStorage.setItem('qm_refresh_token', data.data.tokens.refreshToken);
+        
+        const userData = {
+          id: data.data.user.id,
+          username: data.data.user.username,
+          name: data.data.user.fullName,
+          role: data.data.user.role,
+          permissions: data.data.user.permissions
+        };
+        
+        localStorage.setItem('qm_current_user', JSON.stringify(userData));
+        setCurrentUser(userData);
+        setUser({ name: userData.name, role: userData.role });
+        setIsAuthenticated(true);
+        
+        if (data.data.school) {
+          setSchoolName(data.data.school.name);
+        }
+      } else {
+        setLoginError(data.message || 'Invalid username or password');
+      }
+    } catch (error) {
+      console.error('Login error:', error);
+      setLoginError('Unable to connect to server. Please try again.');
     }
   };
 
