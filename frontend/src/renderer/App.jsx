@@ -660,16 +660,22 @@ const SchoolFinanceApp = () => {
     doc.text(entry.paymentMethod, 68, yPos + 3, { align: 'right' });
     yPos += 6;
   
-    // Balance - Light yellow background (blank for manual entry)
+    // Balance - Light yellow background
     doc.setFillColor(254, 249, 195);
     doc.rect(8, yPos - 1, 64, 6, 'F');
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(161, 98, 7);
     doc.text('Balance:', 10, yPos + 3);
-    // Draw a line for manual writing
-    doc.setDrawColor(180, 180, 180);
-    doc.setLineWidth(0.2);
-    doc.line(28, yPos + 3.5, 68, yPos + 3.5);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(0, 0, 0);
+    if (entry.balance !== undefined && entry.balance !== null) {
+      doc.text(formatCurrency(entry.balance), 68, yPos + 3, { align: 'right' });
+    } else {
+      // Draw a line for manual writing if no balance
+      doc.setDrawColor(180, 180, 180);
+      doc.setLineWidth(0.2);
+      doc.line(35, yPos + 3.5, 68, yPos + 3.5);
+    }
     yPos += 8;
   
     // Description Box - compact
@@ -2414,7 +2420,11 @@ const SchoolFinanceApp = () => {
       if (res.success) {
         alert('Payment recorded successfully!');
         
-        // Print receipt
+        // Calculate new balance after payment
+        const previousBalance = studentBalance?.balance || 0;
+        const newBalance = previousBalance - parseFloat(paymentForm.amount);
+        
+        // Print receipt with balance
         const receiptData = {
           id: res.data.id,
           receiptNo: res.data.receiptNumber,
@@ -2423,7 +2433,8 @@ const SchoolFinanceApp = () => {
           category: 'School Fees',
           description: paymentForm.description || 'School fees payment',
           amount: parseFloat(paymentForm.amount),
-          paymentMethod: paymentForm.paymentMethod.replace('_', ' ').toUpperCase()
+          paymentMethod: paymentForm.paymentMethod.replace('_', ' ').toUpperCase(),
+          balance: newBalance > 0 ? newBalance : 0
         };
         printReceipt(receiptData);
         
@@ -2740,7 +2751,22 @@ const SchoolFinanceApp = () => {
       guardianName: '',
       guardianPhone: '',
       guardianEmail: '',
-      address: ''
+      address: '',
+      totalFees: ''
+    });
+    
+    const [editingStudent, setEditingStudent] = useState(null);
+    const [editStudentForm, setEditStudentForm] = useState({
+      firstName: '',
+      lastName: '',
+      classId: '',
+      gender: 'male',
+      guardianName: '',
+      guardianPhone: '',
+      guardianEmail: '',
+      address: '',
+      totalFees: '',
+      isActive: true
     });
 
     useEffect(() => {
@@ -2783,7 +2809,8 @@ const SchoolFinanceApp = () => {
           guardianName: '',
           guardianPhone: '',
           guardianEmail: '',
-          address: ''
+          address: '',
+          totalFees: ''
         });
         setShowAddForm(false);
         loadStudents();
@@ -2797,6 +2824,54 @@ const SchoolFinanceApp = () => {
       const res = await api.get(`/students/${student.id}/balance`);
       if (res.success) {
         setStudentBalance(res.data);
+      }
+    };
+
+    const startEditStudent = async (student) => {
+      // Load student balance to get current fees
+      const balanceRes = await api.get(`/students/${student.id}/balance`);
+      const currentFees = balanceRes.success ? balanceRes.data.totalFees || 0 : 0;
+      
+      setEditStudentForm({
+        firstName: student.firstName || '',
+        lastName: student.lastName || '',
+        classId: student.classId || '',
+        gender: student.gender || 'male',
+        guardianName: student.guardianName || student.parentName || '',
+        guardianPhone: student.guardianPhone || student.parentPhone || '',
+        guardianEmail: student.guardianEmail || student.parentEmail || '',
+        address: student.address || '',
+        totalFees: currentFees.toString(),
+        isActive: student.isActive !== false
+      });
+      setEditingStudent(student);
+    };
+
+    const updateStudent = async () => {
+      if (!editStudentForm.firstName || !editStudentForm.lastName) {
+        alert('Please fill in First Name and Last Name');
+        return;
+      }
+
+      const res = await api.put(`/students/${editingStudent.id}`, {
+        firstName: editStudentForm.firstName,
+        lastName: editStudentForm.lastName,
+        classId: editStudentForm.classId || null,
+        gender: editStudentForm.gender,
+        parentName: editStudentForm.guardianName,
+        parentPhone: editStudentForm.guardianPhone,
+        parentEmail: editStudentForm.guardianEmail,
+        address: editStudentForm.address,
+        isActive: editStudentForm.isActive,
+        totalFees: editStudentForm.totalFees ? parseFloat(editStudentForm.totalFees) : null
+      });
+
+      if (res.success) {
+        alert('Student updated successfully!');
+        setEditingStudent(null);
+        loadStudents();
+      } else {
+        alert(res.message || 'Failed to update student');
       }
     };
 
@@ -2987,12 +3062,20 @@ const SchoolFinanceApp = () => {
                         <td className="py-3 px-4 text-sm text-gray-600">{student.guardianName || 'N/A'}</td>
                         <td className="py-3 px-4 text-sm text-gray-600">{student.guardianPhone || 'N/A'}</td>
                         <td className="py-3 px-4 text-center">
-                          <button
-                            onClick={() => viewStudentBalance(student)}
-                            className="bg-purple-100 text-purple-700 px-3 py-1 rounded-lg text-sm font-medium hover:bg-purple-200"
-                          >
-                            View Balance
-                          </button>
+                          <div className="flex items-center justify-center gap-2">
+                            <button
+                              onClick={() => viewStudentBalance(student)}
+                              className="bg-purple-100 text-purple-700 px-3 py-1 rounded-lg text-sm font-medium hover:bg-purple-200"
+                            >
+                              Balance
+                            </button>
+                            <button
+                              onClick={() => startEditStudent(student)}
+                              className="bg-blue-100 text-blue-700 px-3 py-1 rounded-lg text-sm font-medium hover:bg-blue-200"
+                            >
+                              Edit
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))
@@ -3002,6 +3085,137 @@ const SchoolFinanceApp = () => {
             </div>
           )}
         </div>
+
+        {/* Edit Student Modal */}
+        {editingStudent && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl shadow-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-bold text-gray-800">Edit Student: {editingStudent.firstName} {editingStudent.lastName}</h3>
+                <button onClick={() => setEditingStudent(null)} className="text-gray-500 hover:text-gray-700">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">First Name *</label>
+                  <input
+                    type="text"
+                    value={editStudentForm.firstName}
+                    onChange={(e) => setEditStudentForm({...editStudentForm, firstName: e.target.value})}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Last Name *</label>
+                  <input
+                    type="text"
+                    value={editStudentForm.lastName}
+                    onChange={(e) => setEditStudentForm({...editStudentForm, lastName: e.target.value})}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Class</label>
+                  <select
+                    value={editStudentForm.classId}
+                    onChange={(e) => setEditStudentForm({...editStudentForm, classId: e.target.value})}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  >
+                    <option value="">Select Class</option>
+                    {classes.map(cls => (
+                      <option key={cls.id} value={cls.id}>{cls.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Gender</label>
+                  <select
+                    value={editStudentForm.gender}
+                    onChange={(e) => setEditStudentForm({...editStudentForm, gender: e.target.value})}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  >
+                    <option value="male">Male</option>
+                    <option value="female">Female</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Guardian Name</label>
+                  <input
+                    type="text"
+                    value={editStudentForm.guardianName}
+                    onChange={(e) => setEditStudentForm({...editStudentForm, guardianName: e.target.value})}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Guardian Phone</label>
+                  <input
+                    type="text"
+                    value={editStudentForm.guardianPhone}
+                    onChange={(e) => setEditStudentForm({...editStudentForm, guardianPhone: e.target.value})}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Guardian Email</label>
+                  <input
+                    type="email"
+                    value={editStudentForm.guardianEmail}
+                    onChange={(e) => setEditStudentForm({...editStudentForm, guardianEmail: e.target.value})}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Address</label>
+                  <input
+                    type="text"
+                    value={editStudentForm.address}
+                    onChange={(e) => setEditStudentForm({...editStudentForm, address: e.target.value})}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Total School Fees (UGX)</label>
+                  <input
+                    type="number"
+                    value={editStudentForm.totalFees}
+                    onChange={(e) => setEditStudentForm({...editStudentForm, totalFees: e.target.value})}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none text-lg font-bold"
+                    placeholder="Enter total fees"
+                  />
+                </div>
+                <div className="flex items-center">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={editStudentForm.isActive}
+                      onChange={(e) => setEditStudentForm({...editStudentForm, isActive: e.target.checked})}
+                      className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    <span className="text-sm font-medium text-gray-700">Active Student</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={updateStudent}
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium"
+                >
+                  Save Changes
+                </button>
+                <button
+                  onClick={() => setEditingStudent(null)}
+                  className="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-800 px-6 py-2 rounded-lg font-medium"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {selectedStudent && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
