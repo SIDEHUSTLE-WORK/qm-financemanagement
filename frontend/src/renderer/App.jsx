@@ -2314,6 +2314,748 @@ const SchoolFinanceApp = () => {
     );
   };
 
+  // School Fees Collection Component
+  const SchoolFeesCollection = () => {
+    const [searchTerm, setSearchTerm] = useState('');
+    const [searchResults, setSearchResults] = useState([]);
+    const [selectedStudent, setSelectedStudent] = useState(null);
+    const [studentBalance, setStudentBalance] = useState(null);
+    const [paymentHistory, setPaymentHistory] = useState([]);
+    const [loadingStudent, setLoadingStudent] = useState(false);
+    const [terms, setTerms] = useState([]);
+    const [recentPayments, setRecentPayments] = useState([]);
+    
+    const [paymentForm, setPaymentForm] = useState({
+      amount: '',
+      paymentMethod: 'cash',
+      termId: '',
+      description: ''
+    });
+
+    useEffect(() => {
+      loadTerms();
+      loadRecentPayments();
+    }, []);
+
+    const loadTerms = async () => {
+      const res = await api.get('/terms');
+      if (res.success) {
+        const data = Array.isArray(res.data) ? res.data : (res.data?.terms || []);
+        setTerms(data);
+        // Auto-select current term if available
+        const currentTerm = data.find(t => t.isCurrent);
+        if (currentTerm) {
+          setPaymentForm(prev => ({ ...prev, termId: currentTerm.id }));
+        }
+      }
+    };
+
+    const loadRecentPayments = async () => {
+      const res = await api.get('/fees/payments/recent');
+      if (res.success) {
+        const data = Array.isArray(res.data) ? res.data : (res.data?.payments || []);
+        setRecentPayments(data);
+      }
+    };
+
+    const searchStudents = async (query) => {
+      if (query.length < 2) {
+        setSearchResults([]);
+        return;
+      }
+      
+      const res = await api.get(`/students/search?q=${encodeURIComponent(query)}`);
+      if (res.success) {
+        const data = Array.isArray(res.data) ? res.data : (res.data?.students || []);
+        setSearchResults(data);
+      }
+    };
+
+    const selectStudent = async (student) => {
+      setLoadingStudent(true);
+      setSelectedStudent(student);
+      setSearchResults([]);
+      setSearchTerm(`${student.firstName} ${student.lastName}`);
+      
+      // Load student balance
+      const balanceRes = await api.get(`/students/${student.id}/balance`);
+      if (balanceRes.success) {
+        setStudentBalance(balanceRes.data);
+      }
+      
+      // Load payment history
+      const historyRes = await api.get(`/students/${student.id}/payments`);
+      if (historyRes.success) {
+        const data = Array.isArray(historyRes.data) ? historyRes.data : (historyRes.data?.payments || []);
+        setPaymentHistory(data);
+      }
+      
+      setLoadingStudent(false);
+    };
+
+    const recordPayment = async () => {
+      if (!selectedStudent) {
+        alert('Please select a student first');
+        return;
+      }
+      
+      if (!paymentForm.amount || parseFloat(paymentForm.amount) <= 0) {
+        alert('Please enter a valid amount');
+        return;
+      }
+
+      const res = await api.post(`/students/${selectedStudent.id}/payments`, {
+        amount: parseFloat(paymentForm.amount),
+        paymentMethod: paymentForm.paymentMethod,
+        termId: paymentForm.termId || null,
+        description: paymentForm.description || `School fees payment`
+      });
+
+      if (res.success) {
+        alert('Payment recorded successfully!');
+        
+        // Print receipt
+        const receiptData = {
+          id: res.data.id,
+          receiptNo: res.data.receiptNumber,
+          date: new Date().toISOString().split('T')[0],
+          studentName: `${selectedStudent.firstName} ${selectedStudent.lastName}`,
+          category: 'School Fees',
+          description: paymentForm.description || 'School fees payment',
+          amount: parseFloat(paymentForm.amount),
+          paymentMethod: paymentForm.paymentMethod.replace('_', ' ').toUpperCase()
+        };
+        printReceipt(receiptData);
+        
+        // Refresh data
+        selectStudent(selectedStudent);
+        loadRecentPayments();
+        
+        // Reset form
+        setPaymentForm(prev => ({
+          ...prev,
+          amount: '',
+          description: ''
+        }));
+        
+        logAction('ADD', 'FEE_PAYMENT', `Recorded ${formatCurrency(receiptData.amount)} for ${receiptData.studentName}`);
+      } else {
+        alert(res.message || 'Error recording payment');
+      }
+    };
+
+    const clearSelection = () => {
+      setSelectedStudent(null);
+      setStudentBalance(null);
+      setPaymentHistory([]);
+      setSearchTerm('');
+    };
+
+    return (
+      <div className="space-y-6">
+        <div className="flex justify-between items-center">
+          <h2 className="text-3xl font-bold text-gray-800">School Fees Collection</h2>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left Panel - Student Search & Payment Form */}
+          <div className="lg:col-span-2 space-y-6">
+            {/* Student Search */}
+            <div className="bg-white rounded-xl shadow-md p-6">
+              <h3 className="text-xl font-bold text-gray-800 mb-4">1. Select Student</h3>
+              
+              <div className="relative">
+                <Search className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search by student name or number..."
+                  value={searchTerm}
+                  onChange={(e) => {
+                    setSearchTerm(e.target.value);
+                    searchStudents(e.target.value);
+                  }}
+                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-lg"
+                />
+                {selectedStudent && (
+                  <button
+                    onClick={clearSelection}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Search Results Dropdown */}
+              {searchResults.length > 0 && !selectedStudent && (
+                <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-64 overflow-y-auto">
+                  {searchResults.map(student => (
+                    <div
+                      key={student.id}
+                      onClick={() => selectStudent(student)}
+                      className="px-4 py-3 hover:bg-blue-50 cursor-pointer border-b last:border-b-0"
+                    >
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <p className="font-bold text-gray-800">{student.firstName} {student.lastName}</p>
+                          <p className="text-sm text-gray-500">{student.studentNumber} • {student.class?.name || 'N/A'}</p>
+                        </div>
+                        <span className="text-blue-600 font-medium">Select</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Selected Student Info */}
+              {selectedStudent && (
+                <div className="mt-4 p-4 bg-blue-50 rounded-lg border-2 border-blue-200">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="font-bold text-xl text-gray-800">{selectedStudent.firstName} {selectedStudent.lastName}</p>
+                      <p className="text-gray-600">Student No: <span className="font-medium">{selectedStudent.studentNumber}</span></p>
+                      <p className="text-gray-600">Class: <span className="font-medium">{selectedStudent.class?.name || 'N/A'}</span></p>
+                      {selectedStudent.guardianPhone && (
+                        <p className="text-gray-600">Guardian: <span className="font-medium">{selectedStudent.guardianPhone}</span></p>
+                      )}
+                    </div>
+                    {loadingStudent ? (
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                    ) : studentBalance && (
+                      <div className="text-right">
+                        <p className="text-sm text-gray-500">Current Balance</p>
+                        <p className={`text-2xl font-bold ${(studentBalance.balance || 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                          {formatCurrency(Math.abs(studentBalance.balance || 0))}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {(studentBalance.balance || 0) > 0 ? 'Outstanding' : 'Overpaid'}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Payment Form */}
+            {selectedStudent && (
+              <div className="bg-white rounded-xl shadow-md p-6">
+                <h3 className="text-xl font-bold text-gray-800 mb-4">2. Record Payment</h3>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Amount (UGX) *</label>
+                    <input
+                      type="number"
+                      value={paymentForm.amount}
+                      onChange={(e) => setPaymentForm({...paymentForm, amount: e.target.value})}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none text-xl font-bold"
+                      placeholder="Enter amount"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Payment Method</label>
+                    <select
+                      value={paymentForm.paymentMethod}
+                      onChange={(e) => setPaymentForm({...paymentForm, paymentMethod: e.target.value})}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none"
+                    >
+                      <option value="cash">Cash</option>
+                      <option value="mobile_money">Mobile Money</option>
+                      <option value="bank_transfer">Bank Transfer</option>
+                      <option value="school_pay">School Pay</option>
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Term</label>
+                    <select
+                      value={paymentForm.termId}
+                      onChange={(e) => setPaymentForm({...paymentForm, termId: e.target.value})}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none"
+                    >
+                      <option value="">Select Term</option>
+                      {terms.map(term => (
+                        <option key={term.id} value={term.id}>
+                          {term.name} {term.year} {term.isCurrent ? '(Current)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Description (Optional)</label>
+                    <input
+                      type="text"
+                      value={paymentForm.description}
+                      onChange={(e) => setPaymentForm({...paymentForm, description: e.target.value})}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none"
+                      placeholder="e.g., Term 1 partial payment"
+                    />
+                  </div>
+                </div>
+
+                {/* Quick Amount Buttons */}
+                <div className="mt-4">
+                  <p className="text-sm text-gray-500 mb-2">Quick amounts:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {[50000, 100000, 200000, 300000, 500000, 1000000].map(amount => (
+                      <button
+                        key={amount}
+                        onClick={() => setPaymentForm({...paymentForm, amount: amount.toString()})}
+                        className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700"
+                      >
+                        {formatCurrency(amount)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <button
+                  onClick={recordPayment}
+                  className="w-full mt-6 bg-green-600 hover:bg-green-700 text-white px-6 py-4 rounded-lg font-bold text-lg flex items-center justify-center gap-2"
+                >
+                  <Receipt className="w-6 h-6" />
+                  Record Payment & Print Receipt
+                </button>
+              </div>
+            )}
+
+            {/* Payment History for Selected Student */}
+            {selectedStudent && paymentHistory.length > 0 && (
+              <div className="bg-white rounded-xl shadow-md p-6">
+                <h3 className="text-xl font-bold text-gray-800 mb-4">Payment History</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-gray-200">
+                        <th className="text-left py-2 px-3 text-sm font-semibold text-gray-700">Receipt</th>
+                        <th className="text-left py-2 px-3 text-sm font-semibold text-gray-700">Date</th>
+                        <th className="text-left py-2 px-3 text-sm font-semibold text-gray-700">Term</th>
+                        <th className="text-right py-2 px-3 text-sm font-semibold text-gray-700">Amount</th>
+                        <th className="text-center py-2 px-3 text-sm font-semibold text-gray-700">Print</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paymentHistory.slice(0, 10).map((payment) => (
+                        <tr key={payment.id} className="border-b border-gray-100">
+                          <td className="py-2 px-3 text-sm font-medium text-blue-600">{payment.receiptNumber}</td>
+                          <td className="py-2 px-3 text-sm text-gray-600">{payment.date?.split('T')[0]}</td>
+                          <td className="py-2 px-3 text-sm text-gray-600">{payment.term?.name || 'N/A'}</td>
+                          <td className="py-2 px-3 text-sm text-green-600 font-semibold text-right">{formatCurrency(payment.amount)}</td>
+                          <td className="py-2 px-3 text-center">
+                            <button
+                              onClick={() => printReceipt({
+                                receiptNo: payment.receiptNumber,
+                                date: payment.date?.split('T')[0],
+                                studentName: `${selectedStudent.firstName} ${selectedStudent.lastName}`,
+                                category: 'School Fees',
+                                description: payment.description || 'School fees payment',
+                                amount: payment.amount,
+                                paymentMethod: payment.paymentMethod?.replace('_', ' ').toUpperCase() || 'Cash'
+                              })}
+                              className="text-purple-600 hover:text-purple-700"
+                            >
+                              <Printer className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Right Panel - Balance Summary & Recent Payments */}
+          <div className="space-y-6">
+            {/* Student Balance Card */}
+            {selectedStudent && studentBalance && (
+              <div className="bg-white rounded-xl shadow-md p-6">
+                <h3 className="text-lg font-bold text-gray-800 mb-4">Fee Summary</h3>
+                <div className="space-y-3">
+                  <div className="flex justify-between p-3 bg-blue-50 rounded-lg">
+                    <span className="text-gray-600">Total Fees:</span>
+                    <span className="font-bold text-blue-600">{formatCurrency(studentBalance.totalFees || 0)}</span>
+                  </div>
+                  <div className="flex justify-between p-3 bg-green-50 rounded-lg">
+                    <span className="text-gray-600">Total Paid:</span>
+                    <span className="font-bold text-green-600">{formatCurrency(studentBalance.totalPaid || 0)}</span>
+                  </div>
+                  <div className={`flex justify-between p-3 rounded-lg border-2 ${(studentBalance.balance || 0) > 0 ? 'bg-red-50 border-red-300' : 'bg-green-50 border-green-300'}`}>
+                    <span className="font-bold text-gray-800">Balance:</span>
+                    <span className={`font-bold text-xl ${(studentBalance.balance || 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                      {formatCurrency(Math.abs(studentBalance.balance || 0))}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Recent Payments (All Students) */}
+            <div className="bg-white rounded-xl shadow-md p-6">
+              <h3 className="text-lg font-bold text-gray-800 mb-4">Recent Collections</h3>
+              {recentPayments.length === 0 ? (
+                <p className="text-gray-500 text-center py-4">No recent payments</p>
+              ) : (
+                <div className="space-y-3">
+                  {recentPayments.slice(0, 8).map((payment) => (
+                    <div key={payment.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                      <div>
+                        <p className="font-medium text-gray-800 text-sm">
+                          {payment.student?.firstName} {payment.student?.lastName}
+                        </p>
+                        <p className="text-xs text-gray-500">{payment.receiptNumber}</p>
+                      </div>
+                      <span className="font-bold text-green-600 text-sm">{formatCurrency(payment.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Students Management Component
+  const StudentsManagement = () => {
+    const [students, setStudents] = useState([]);
+    const [classes, setClasses] = useState([]);
+    const [loadingStudents, setLoadingStudents] = useState(true);
+    const [showAddForm, setShowAddForm] = useState(false);
+    const [searchTerm, setSearchTerm] = useState('');
+    const [filterClass, setFilterClass] = useState('All');
+    const [selectedStudent, setSelectedStudent] = useState(null);
+    const [studentBalance, setStudentBalance] = useState(null);
+    
+    const [newStudent, setNewStudent] = useState({
+      firstName: '',
+      lastName: '',
+      classId: '',
+      gender: 'male',
+      guardianName: '',
+      guardianPhone: '',
+      guardianEmail: '',
+      address: ''
+    });
+
+    useEffect(() => {
+      loadStudents();
+      loadClasses();
+    }, []);
+
+    const loadStudents = async () => {
+      setLoadingStudents(true);
+      const res = await api.get('/students');
+      if (res.success) {
+        const dataArray = Array.isArray(res.data) ? res.data : (res.data?.students || res.data?.items || []);
+        setStudents(dataArray);
+      }
+      setLoadingStudents(false);
+    };
+
+    const loadClasses = async () => {
+      const res = await api.get('/students/classes');
+      if (res.success) {
+        const dataArray = Array.isArray(res.data) ? res.data : (res.data?.classes || []);
+        setClasses(dataArray);
+      }
+    };
+
+    const addStudent = async () => {
+      if (!newStudent.firstName || !newStudent.lastName || !newStudent.classId) {
+        alert('Please fill in First Name, Last Name, and Class');
+        return;
+      }
+
+      const res = await api.post('/students', newStudent);
+      if (res.success) {
+        alert('Student added successfully!');
+        setNewStudent({
+          firstName: '',
+          lastName: '',
+          classId: '',
+          gender: 'male',
+          guardianName: '',
+          guardianPhone: '',
+          guardianEmail: '',
+          address: ''
+        });
+        setShowAddForm(false);
+        loadStudents();
+      } else {
+        alert(res.message || 'Failed to add student');
+      }
+    };
+
+    const viewStudentBalance = async (student) => {
+      setSelectedStudent(student);
+      const res = await api.get(`/students/${student.id}/balance`);
+      if (res.success) {
+        setStudentBalance(res.data);
+      }
+    };
+
+    const filteredStudents = students.filter(student => {
+      const fullName = `${student.firstName} ${student.lastName}`.toLowerCase();
+      const matchesSearch = fullName.includes(searchTerm.toLowerCase()) || 
+                           (student.studentNumber || '').toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesClass = filterClass === 'All' || student.classId === filterClass;
+      return matchesSearch && matchesClass;
+    });
+
+    return (
+      <div className="space-y-6">
+        <div className="flex justify-between items-center">
+          <h2 className="text-3xl font-bold text-gray-800">Students Management</h2>
+          <button
+            onClick={() => setShowAddForm(!showAddForm)}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium flex items-center gap-2"
+          >
+            <Plus className="w-5 h-5" />
+            Add New Student
+          </button>
+        </div>
+
+        {showAddForm && (
+          <div className="bg-white rounded-xl shadow-md p-6">
+            <h3 className="text-xl font-bold text-gray-800 mb-4">Add New Student</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">First Name *</label>
+                <input
+                  type="text"
+                  value={newStudent.firstName}
+                  onChange={(e) => setNewStudent({...newStudent, firstName: e.target.value})}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  placeholder="Enter first name"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Last Name *</label>
+                <input
+                  type="text"
+                  value={newStudent.lastName}
+                  onChange={(e) => setNewStudent({...newStudent, lastName: e.target.value})}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  placeholder="Enter last name"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Class *</label>
+                <select
+                  value={newStudent.classId}
+                  onChange={(e) => setNewStudent({...newStudent, classId: e.target.value})}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                >
+                  <option value="">Select Class</option>
+                  {classes.map(cls => (
+                    <option key={cls.id} value={cls.id}>{cls.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Gender</label>
+                <select
+                  value={newStudent.gender}
+                  onChange={(e) => setNewStudent({...newStudent, gender: e.target.value})}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                >
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Guardian Name</label>
+                <input
+                  type="text"
+                  value={newStudent.guardianName}
+                  onChange={(e) => setNewStudent({...newStudent, guardianName: e.target.value})}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  placeholder="Enter guardian name"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Guardian Phone</label>
+                <input
+                  type="text"
+                  value={newStudent.guardianPhone}
+                  onChange={(e) => setNewStudent({...newStudent, guardianPhone: e.target.value})}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  placeholder="Enter phone number"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Guardian Email</label>
+                <input
+                  type="email"
+                  value={newStudent.guardianEmail}
+                  onChange={(e) => setNewStudent({...newStudent, guardianEmail: e.target.value})}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  placeholder="Enter email"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Address</label>
+                <input
+                  type="text"
+                  value={newStudent.address}
+                  onChange={(e) => setNewStudent({...newStudent, address: e.target.value})}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  placeholder="Enter address"
+                />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-4">
+              <button
+                onClick={addStudent}
+                className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-medium"
+              >
+                Save Student
+              </button>
+              <button
+                onClick={() => setShowAddForm(false)}
+                className="bg-gray-300 hover:bg-gray-400 text-gray-800 px-6 py-2 rounded-lg font-medium"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="bg-white rounded-xl shadow-md p-6">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-xl font-bold text-gray-800">Student Records ({filteredStudents.length})</h3>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div className="relative">
+              <Search className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search by name or student number..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              />
+            </div>
+            <select
+              value={filterClass}
+              onChange={(e) => setFilterClass(e.target.value)}
+              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            >
+              <option value="All">All Classes</option>
+              {classes.map(cls => (
+                <option key={cls.id} value={cls.id}>{cls.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {loadingStudents ? (
+            <div className="text-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+              <p className="text-gray-500 mt-2">Loading students...</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Student No</th>
+                    <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Name</th>
+                    <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Class</th>
+                    <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Guardian</th>
+                    <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Phone</th>
+                    <th className="text-center py-3 px-4 text-sm font-semibold text-gray-700">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredStudents.length === 0 ? (
+                    <tr>
+                      <td colSpan="6" className="text-center py-8 text-gray-500">No students found</td>
+                    </tr>
+                  ) : (
+                    filteredStudents.map((student) => (
+                      <tr key={student.id} className="border-b border-gray-100 hover:bg-gray-50">
+                        <td className="py-3 px-4 text-sm font-medium text-blue-600">{student.studentNumber}</td>
+                        <td className="py-3 px-4 text-sm text-gray-800">{student.firstName} {student.lastName}</td>
+                        <td className="py-3 px-4 text-sm text-gray-600">{student.class?.name || 'N/A'}</td>
+                        <td className="py-3 px-4 text-sm text-gray-600">{student.guardianName || 'N/A'}</td>
+                        <td className="py-3 px-4 text-sm text-gray-600">{student.guardianPhone || 'N/A'}</td>
+                        <td className="py-3 px-4 text-center">
+                          <button
+                            onClick={() => viewStudentBalance(student)}
+                            className="bg-purple-100 text-purple-700 px-3 py-1 rounded-lg text-sm font-medium hover:bg-purple-200"
+                          >
+                            View Balance
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {selectedStudent && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl shadow-xl p-6 max-w-lg w-full mx-4">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-bold text-gray-800">Student Balance</h3>
+                <button onClick={() => {setSelectedStudent(null); setStudentBalance(null);}} className="text-gray-500 hover:text-gray-700">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              
+              <div className="bg-blue-50 p-4 rounded-lg mb-4">
+                <p className="font-bold text-lg text-gray-800">{selectedStudent.firstName} {selectedStudent.lastName}</p>
+                <p className="text-sm text-gray-600">Student No: {selectedStudent.studentNumber}</p>
+                <p className="text-sm text-gray-600">Class: {selectedStudent.class?.name || 'N/A'}</p>
+              </div>
+
+              {studentBalance ? (
+                <div className="space-y-3">
+                  <div className="flex justify-between p-3 bg-green-50 rounded-lg">
+                    <span className="font-medium text-gray-700">Total Paid:</span>
+                    <span className="font-bold text-green-600">{formatCurrency(studentBalance.totalPaid || 0)}</span>
+                  </div>
+                  <div className="flex justify-between p-3 bg-red-50 rounded-lg">
+                    <span className="font-medium text-gray-700">Total Fees:</span>
+                    <span className="font-bold text-red-600">{formatCurrency(studentBalance.totalFees || 0)}</span>
+                  </div>
+                  <div className="flex justify-between p-3 bg-blue-100 rounded-lg border-2 border-blue-300">
+                    <span className="font-bold text-gray-800">Balance:</span>
+                    <span className={`font-bold text-xl ${(studentBalance.balance || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {formatCurrency(studentBalance.balance || 0)}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-4">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                  <p className="text-gray-500 mt-2">Loading balance...</p>
+                </div>
+              )}
+
+              <button
+                onClick={() => {setSelectedStudent(null); setStudentBalance(null);}}
+                className="w-full mt-4 bg-gray-300 hover:bg-gray-400 text-gray-800 px-6 py-2 rounded-lg font-medium"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // Settings Component
   const Settings = () => {
     const [localSchoolName, setLocalSchoolName] = useState('QUEEN MOTHER JUNIOR SCHOOL');
@@ -2901,14 +3643,15 @@ const SchoolFinanceApp = () => {
       <nav className="bg-white shadow-md print:hidden">
   <div className="max-w-7xl mx-auto px-6">
     <div className="flex gap-1">
-      {[
+     {[
         { id: 'dashboard', label: 'Dashboard', icon: <BarChart3 className="w-5 h-5" /> },
-        { id: 'income', label: 'Income', icon: <TrendingUp className="w-5 h-5" /> },
+        { id: 'fees', label: 'School Fees', icon: <Receipt className="w-5 h-5" /> },
+        { id: 'income', label: 'Other Income', icon: <TrendingUp className="w-5 h-5" /> },
         { id: 'expenses', label: 'Expenses', icon: <DollarSign className="w-5 h-5" /> },
+        { id: 'students', label: 'Students', icon: <User className="w-5 h-5" /> },
         { id: 'reports', label: 'Reports', icon: <FileText className="w-5 h-5" /> },
         { id: 'settings', label: 'Settings', icon: <SettingsIcon className="w-5 h-5" /> }
-      ].map(item => (
-        <button
+      ].map(item => (        <button
           key={item.id}
           onClick={() => setCurrentView(item.id)}
           className={`flex items-center gap-2 px-6 py-4 font-medium transition-colors ${
@@ -2927,8 +3670,10 @@ const SchoolFinanceApp = () => {
 
 <main className="max-w-7xl mx-auto px-6 py-8">
   {currentView === 'dashboard' && <Dashboard />}
+  {currentView === 'fees' && <SchoolFeesCollection />}
   {currentView === 'income' && <IncomeManagement />}
   {currentView === 'expenses' && <ExpenseManagement />}
+  {currentView === 'students' && <StudentsManagement />}
   {currentView === 'reports' && <Reports />}
   {currentView === 'settings' && <Settings />}
 </main>
