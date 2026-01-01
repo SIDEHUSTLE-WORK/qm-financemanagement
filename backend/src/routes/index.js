@@ -56,6 +56,7 @@ router.get('/students/:id/payments', authenticate, checkPermission('students', '
 router.post('/students/:id/payments', authenticate, checkPermission('income', 'create'), studentController.recordPayment);
 router.post('/students', authenticate, checkPermission('students', 'create'), studentValidation, studentController.create);
 router.put('/students/:id', authenticate, checkPermission('students', 'update'), studentValidation, studentController.update);
+router.post('/students/promote', authenticate, authorize('super_admin', 'director'), studentController.promoteStudents);
 
 // ==================== FEES ROUTES ====================
 router.get('/fees/payments/recent', authenticate, async (req, res) => {

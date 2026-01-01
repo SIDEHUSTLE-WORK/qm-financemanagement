@@ -688,6 +688,154 @@ const recordPayment = async (req, res) => {
   }
 };
 
+// Promote students from one class to another
+const promoteStudents = async (req, res) => {
+  try {
+    const { fromClassId, toClassId, studentIds, carryForwardBalance, newTermFees } = req.body;
+    const schoolId = req.user.schoolId;
+
+    if (!fromClassId || !toClassId) {
+      return res.status(400).json({ success: false, message: 'Source and destination classes are required' });
+    }
+
+    // Verify classes exist and belong to school
+    const [fromClass, toClass] = await Promise.all([
+      prisma.class.findFirst({ where: { id: fromClassId, schoolId } }),
+      prisma.class.findFirst({ where: { id: toClassId, schoolId } })
+    ]);
+
+    if (!fromClass || !toClass) {
+      return res.status(404).json({ success: false, message: 'One or both classes not found' });
+    }
+
+    // Get students to promote
+    let studentsToPromote;
+    if (studentIds && studentIds.length > 0) {
+      // Promote specific students
+      studentsToPromote = await prisma.student.findMany({
+        where: { 
+          id: { in: studentIds },
+          schoolId,
+          classId: fromClassId,
+          isActive: true
+        },
+        include: { balances: true }
+      });
+    } else {
+      // Promote all active students in the class
+      studentsToPromote = await prisma.student.findMany({
+        where: { 
+          schoolId,
+          classId: fromClassId,
+          isActive: true
+        },
+        include: { balances: true }
+      });
+    }
+
+    if (studentsToPromote.length === 0) {
+      return res.status(400).json({ success: false, message: 'No students found to promote' });
+    }
+
+    // Get current term for balance handling
+    const currentTerm = await prisma.academicTerm.findFirst({
+      where: { schoolId, isCurrent: true }
+    });
+
+    // Promote each student
+    const promotedStudents = [];
+    const errors = [];
+
+    for (const student of studentsToPromote) {
+      try {
+        // Update student's class
+        await prisma.student.update({
+          where: { id: student.id },
+          data: { classId: toClassId }
+        });
+
+        // Handle balance carry forward if new term and fees provided
+        if (currentTerm && (carryForwardBalance || newTermFees)) {
+          // Get current balance
+          const currentBalance = student.balances.find(b => b.termId === currentTerm.id);
+          const outstandingBalance = currentBalance 
+            ? parseFloat(currentBalance.totalFees) + parseFloat(currentBalance.previousBalance) - parseFloat(currentBalance.amountPaid)
+            : 0;
+
+          // Create or update balance for current term with new class fees
+          if (newTermFees || carryForwardBalance) {
+            await prisma.studentBalance.upsert({
+              where: {
+                studentId_termId: { studentId: student.id, termId: currentTerm.id }
+              },
+              update: {
+                totalFees: newTermFees ? parseFloat(newTermFees) : (currentBalance?.totalFees || 0),
+                previousBalance: carryForwardBalance ? outstandingBalance : 0
+              },
+              create: {
+                studentId: student.id,
+                termId: currentTerm.id,
+                totalFees: newTermFees ? parseFloat(newTermFees) : 0,
+                amountPaid: 0,
+                previousBalance: carryForwardBalance ? outstandingBalance : 0
+              }
+            });
+          }
+        }
+
+        promotedStudents.push({
+          id: student.id,
+          studentNumber: student.studentNumber,
+          name: `${student.firstName} ${student.lastName}`
+        });
+      } catch (err) {
+        errors.push({
+          studentId: student.id,
+          name: `${student.firstName} ${student.lastName}`,
+          error: err.message
+        });
+      }
+    }
+
+    // Audit log
+    await createAuditLog({
+      schoolId,
+      userId: req.user.id,
+      userName: req.user.fullName,
+      userRole: req.user.role,
+      action: 'PROMOTE',
+      entityType: 'students',
+      entityId: fromClassId,
+      description: `Promoted ${promotedStudents.length} students from ${fromClass.name} to ${toClass.name}`,
+      newValues: { 
+        fromClass: fromClass.name, 
+        toClass: toClass.name, 
+        count: promotedStudents.length,
+        studentNames: promotedStudents.map(s => s.name)
+      },
+      ipAddress: req.ip,
+      userAgent: req.get('User-Agent')
+    });
+
+    res.json({
+      success: true,
+      message: `Successfully promoted ${promotedStudents.length} students from ${fromClass.name} to ${toClass.name}`,
+      data: {
+        promoted: promotedStudents,
+        errors: errors,
+        summary: {
+          total: studentsToPromote.length,
+          successful: promotedStudents.length,
+          failed: errors.length
+        }
+      }
+    });
+  } catch (error) {
+    logger.error('Promote students error:', error);
+    res.status(500).json({ success: false, message: 'Failed to promote students' });
+  }
+};
+
 module.exports = {
   getAll,
   search,
@@ -698,5 +846,6 @@ module.exports = {
   update,
   getClasses,
   getPayments,
-  recordPayment
+  recordPayment,
+  promoteStudents
 };
