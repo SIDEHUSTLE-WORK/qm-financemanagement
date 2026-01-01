@@ -1,0 +1,30 @@
+{
+  "appId": "com.queenmother.financialsystem",
+  "productName": "QM Financial System",
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "dist/**/*",
+    "src/**/*",
+    "node_modules/**/*"
+  ],
+  "asarUnpack": [
+    "node_modules/better-sqlite3/**/*"
+  ],
+  "mac": {
+    "target": ["dmg"],
+    "icon": "public/icon.icns",
+    "category": "public.app-category.finance"
+  },
+  "win": {
+    "target": ["nsis"],
+    "icon": "public/icon.ico"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true
+  }
+}
