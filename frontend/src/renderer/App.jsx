@@ -811,9 +811,14 @@ const SchoolFinanceApp = () => {
         setUser({ name: userData.name, role: userData.role });
         setIsAuthenticated(true);
         
-        if (data.data.school) {
+       if (data.data.school) {
           setSchoolName(data.data.school.name);
         }
+        
+        // Load data from API after successful login
+        await loadCategoriesFromAPI();
+        await loadIncomeFromAPI();
+        await loadExpensesFromAPI();
       } else {
         setLoginError(data.message || 'Invalid username or password');
       }
