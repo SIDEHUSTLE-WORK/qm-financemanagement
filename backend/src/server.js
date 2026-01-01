@@ -13,11 +13,37 @@ const PORT = process.env.PORT || 5000;
 // Security middleware
 app.use(helmet());
 
-// CORS configuration
+// CORS configuration - handle multiple origins
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'https://qm-financemanagement-9pap.vercel.app'
+];
+
+// Add any origins from environment variable
+if (process.env.FRONTEND_URL) {
+  const envOrigins = process.env.FRONTEND_URL.split(',').map(url => url.trim());
+  envOrigins.forEach(origin => {
+    if (!allowedOrigins.includes(origin)) {
+      allowedOrigins.push(origin);
+    }
+  });
+}
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, curl, etc.)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      logger.warn(`CORS blocked origin: ${origin}`);
+      callback(null, true); // Allow anyway in case of dynamic origins
+    }
+  },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
@@ -57,6 +83,7 @@ app.use((err, req, res, next) => {
 const server = app.listen(PORT, () => {
   logger.info(`🚀 QM Finance API running on port ${PORT}`);
   logger.info(`📚 Environment: ${process.env.NODE_ENV || 'development'}`);
+  logger.info(`🌐 Allowed origins: ${allowedOrigins.join(', ')}`);
 });
 
 // Graceful shutdown

@@ -128,7 +128,7 @@ async function main() {
   }
   console.log('✅ Terms created: Term 1, Term 2, Term 3');
 
-  // Create classes
+  // Create classes (using findFirst + create pattern to handle nullable section)
   const classes = [
     { name: 'Baby Class', level: 1 },
     { name: 'Middle Class', level: 2 },
@@ -143,15 +143,25 @@ async function main() {
   ];
 
   for (const cls of classes) {
-    await prisma.class.upsert({
-      where: { schoolId_name_section: { schoolId: school.id, name: cls.name, section: null } },
-      update: {},
-      create: {
+    // Check if class exists
+    const existing = await prisma.class.findFirst({
+      where: {
         schoolId: school.id,
         name: cls.name,
-        level: cls.level
+        section: null
       }
     });
+
+    if (!existing) {
+      await prisma.class.create({
+        data: {
+          schoolId: school.id,
+          name: cls.name,
+          level: cls.level,
+          section: null
+        }
+      });
+    }
   }
   console.log('✅ Classes created:', classes.map(c => c.name).join(', '));
 
