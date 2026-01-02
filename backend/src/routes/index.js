@@ -6,7 +6,8 @@ const authController = require('../controllers/authController');
 const incomeController = require('../controllers/incomeController');
 const expenseController = require('../controllers/expenseController');
 const studentController = require('../controllers/studentController');
-const reportController = require('../controllers/reportController');
+const smsController = require('../controllers/smsController');
+const budgetController = require('../controllers/budgetController');eportController = require('../controllers/reportController');
 const smsController = require('../controllers/smsController');
 const { getAuditLogs } = require('../middleware/audit');
 
@@ -277,6 +278,75 @@ router.get('/terms/current', authenticate, async (req, res) => {
 
 // ==================== AUDIT ROUTES ====================
 router.get('/audit-logs', authenticate, authorize('super_admin', 'director'), getAuditLogs);
+
+
+// ==================== BUDGET ROUTES ====================
+router.get('/budgets', authenticateToken, budgetController.getBudgets);
+router.post('/budgets', authenticateToken, budgetController.upsertBudget);
+router.post('/budgets/bulk', authenticateToken, budgetController.setBulkBudgets);
+router.delete('/budgets/:id', authenticateToken, budgetController.deleteBudget);
+router.get('/budgets/summary', authenticateToken, budgetController.getBudgetSummary);
+
+// ==================== RECEIPT VERIFICATION ====================
+// Public route - no auth needed (for parents to verify)
+router.get('/verify/:receiptNumber', async (req, res) => {
+  try {
+    const { receiptNumber } = req.params;
+    
+    const income = await prisma.income.findFirst({
+      where: { receiptNumber },
+      include: {
+        student: { select: { firstName: true, lastName: true, studentNumber: true } },
+        school: { select: { name: true, phone: true } },
+        category: { select: { name: true } }
+      }
+    });
+
+    if (!income) {
+      return res.status(404).json({
+        success: false,
+        verified: false,
+        message: 'Receipt not found. This may be a fraudulent receipt.'
+      });
+    }
+
+    if (income.isVoided) {
+      return res.status(400).json({
+        success: false,
+        verified: false,
+        message: 'This receipt has been VOIDED and is no longer valid.',
+        voidedAt: income.voidedAt,
+        voidReason: income.voidReason
+      });
+    }
+
+    res.json({
+      success: true,
+      verified: true,
+      message: 'Receipt verified successfully!',
+      data: {
+        receiptNumber: income.receiptNumber,
+        date: income.date,
+        amount: parseFloat(income.amount),
+        description: income.description,
+        paymentMethod: income.paymentMethod,
+        studentName: income.student ? `${income.student.firstName} ${income.student.lastName}` : null,
+        studentNumber: income.student?.studentNumber,
+        category: income.category?.name,
+        schoolName: income.school?.name,
+        schoolPhone: income.school?.phone
+      }
+    });
+  } catch (error) {
+    console.error('Verification error:', error);
+    res.status(500).json({
+      success: false,
+      verified: false,
+      message: 'Verification failed. Please contact the school.'
+    });
+  }
+});
+
 
 // ==================== HEALTH CHECK ====================
 router.get('/health', (req, res) => {
