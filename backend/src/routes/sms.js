@@ -317,4 +317,78 @@ router.get('/stats', authenticateToken, async (req, res) => {
   }
 });
 
+// Get fee defaulters (students with outstanding balance)
+router.get('/defaulters', authenticateToken, async (req, res) => {
+  try {
+    const { prisma } = require('../config/database');
+    const { minBalance, classId } = req.query;
+
+    // Build where clause
+    const whereClause = {
+      schoolId: req.user.schoolId,
+      isActive: true
+    };
+
+    if (classId) {
+      whereClause.classId = classId;
+    }
+
+    // Get all active students with their balance info
+    const students = await prisma.student.findMany({
+      where: whereClause,
+      include: {
+        class: true,
+        balances: {
+          orderBy: { createdAt: 'desc' },
+          take: 1  // Get the most recent balance record
+        }
+      }
+    });
+
+    // Calculate balance for each student and filter defaulters
+    const defaulters = students
+      .map(student => {
+        // Get the latest balance record
+        const latestBalance = student.balances[0];
+        
+        const totalFees = latestBalance ? parseFloat(latestBalance.totalFees) : 0;
+        const amountPaid = latestBalance ? parseFloat(latestBalance.amountPaid) : 0;
+        const previousBalance = latestBalance ? parseFloat(latestBalance.previousBalance) : 0;
+        const balance = totalFees + previousBalance - amountPaid;
+
+        return {
+          id: student.id,
+          studentNumber: student.studentNumber,
+          firstName: student.firstName,
+          lastName: student.lastName,
+          fullName: `${student.firstName} ${student.lastName}`,
+          className: student.class?.name || 'N/A',
+          classId: student.classId,
+          phone: student.parentPhone || student.parentPhoneAlt || null,
+          totalFees,
+          amountPaid,
+          previousBalance,
+          balance
+        };
+      })
+      // Filter to only students with outstanding balance AND have a phone
+      .filter(student => {
+        const minBal = minBalance ? parseFloat(minBalance) : 0;
+        return student.balance > minBal && student.phone;
+      })
+      // Sort by highest balance first
+      .sort((a, b) => b.balance - a.balance);
+
+    res.json({ success: true, data: defaulters });
+
+  } catch (error) {
+    console.error('Defaulters Error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to fetch defaulters: ' + error.message 
+    });
+  }
+});
+
+
 module.exports = router;
