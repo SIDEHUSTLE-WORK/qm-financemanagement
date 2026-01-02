@@ -3179,8 +3179,8 @@ const SchoolFinanceApp = () => {
                         <td className="py-3 px-4 text-sm font-medium text-blue-600">{student.studentNumber}</td>
                         <td className="py-3 px-4 text-sm text-gray-800">{student.firstName} {student.lastName}</td>
                         <td className="py-3 px-4 text-sm text-gray-600">{student.class?.name || 'N/A'}</td>
-                        <td className="py-3 px-4 text-sm text-gray-600">{student.guardianName || 'N/A'}</td>
-                        <td className="py-3 px-4 text-sm text-gray-600">{student.guardianPhone || 'N/A'}</td>
+                        <td className="py-3 px-4 text-sm text-gray-600">{student.guardianName || student.parentName || 'N/A'}</td>
+                        <td className="py-3 px-4 text-sm text-gray-600">{student.guardianPhone || student.parentPhone || 'N/A'}</td>
                         <td className="py-3 px-4 text-center">
                           <div className="flex items-center justify-center gap-2">
                             <button
@@ -3521,13 +3521,13 @@ const SchoolFinanceApp = () => {
 
               {studentBalance ? (
                 <div className="space-y-3">
+                  <div className="flex justify-between p-3 bg-blue-50 rounded-lg">
+                    <span className="font-medium text-gray-700">Total Fees:</span>
+                    <span className="font-bold text-blue-600">{formatCurrency(studentBalance.totalFees || 0)}</span>
+                  </div>
                   <div className="flex justify-between p-3 bg-green-50 rounded-lg">
                     <span className="font-medium text-gray-700">Total Paid:</span>
-                    <span className="font-bold text-green-600">{formatCurrency(studentBalance.totalPaid || 0)}</span>
-                  </div>
-                  <div className="flex justify-between p-3 bg-red-50 rounded-lg">
-                    <span className="font-medium text-gray-700">Total Fees:</span>
-                    <span className="font-bold text-red-600">{formatCurrency(studentBalance.totalFees || 0)}</span>
+                    <span className="font-bold text-green-600">{formatCurrency(studentBalance.amountPaid || studentBalance.totalPaid || 0)}</span>
                   </div>
                   <div className="flex justify-between p-3 bg-blue-100 rounded-lg border-2 border-blue-300">
                     <span className="font-bold text-gray-800">Balance:</span>
