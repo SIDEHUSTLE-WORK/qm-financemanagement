@@ -298,40 +298,81 @@ exports.getStats = async (req, res) => {
   }
 };
 
-// Get defaulters for SMS
+// Get defaulters for SMS - FIXED VERSION
 exports.getDefaulters = async (req, res) => {
   try {
-    const { minBalance = 0, classId } = req.query;
+    const { minBalance, classId } = req.query;
 
+    // Build where clause
+    const whereClause = {
+      schoolId: req.user.schoolId,
+      isActive: true
+    };
+
+    if (classId) {
+      whereClause.classId = classId;
+    }
+
+    // Step 1: Get all active students with class info
     const students = await prisma.student.findMany({
-      where: {
-        schoolId: req.user.schoolId,
-        isActive: true,
-        ...(classId && { classId })
-      },
+      where: whereClause,
       include: {
-        class: { select: { name: true } },
-        balances: {
-          where: { balance: { gt: parseFloat(minBalance) } }
-        }
+        class: true
       }
     });
 
-    // Filter students with balance and phone
+    // Step 2: Get all student IDs
+    const studentIds = students.map(s => s.id);
+    
+    // Step 3: Fetch balances separately to avoid complex nested queries
+    const balances = await prisma.studentBalance.findMany({
+      where: {
+        studentId: { in: studentIds }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // Step 4: Create a map of student ID to their latest balance
+    const balanceMap = {};
+    for (const bal of balances) {
+      if (!balanceMap[bal.studentId]) {
+        balanceMap[bal.studentId] = bal;
+      }
+    }
+
+    // Step 5: Calculate balance for each student and filter defaulters
     const defaulters = students
-      .filter(s => {
-        const totalBalance = s.balances.reduce((sum, b) => sum + parseFloat(b.balance), 0);
-        return totalBalance > parseFloat(minBalance) && (s.parentPhone || s.parentPhoneAlt);
+      .map(student => {
+        const latestBalance = balanceMap[student.id];
+        
+        const totalFees = latestBalance ? Number(latestBalance.totalFees) : 0;
+        const amountPaid = latestBalance ? Number(latestBalance.amountPaid) : 0;
+        const previousBalance = latestBalance ? Number(latestBalance.previousBalance) : 0;
+        const balance = totalFees + previousBalance - amountPaid;
+
+        return {
+          id: student.id,
+          studentNumber: student.studentNumber,
+          firstName: student.firstName,
+          lastName: student.lastName,
+          fullName: `${student.firstName} ${student.lastName}`,
+          className: student.class?.name || 'N/A',
+          classId: student.classId,
+          parentName: student.parentName,
+          phone: student.parentPhone || student.parentPhoneAlt || null,
+          totalFees,
+          amountPaid,
+          previousBalance,
+          balance
+        };
       })
-      .map(s => ({
-        id: s.id,
-        studentNumber: s.studentNumber,
-        fullName: `${s.firstName} ${s.lastName}`,
-        className: s.class?.name || 'N/A',
-        parentName: s.parentName,
-        phone: s.parentPhone || s.parentPhoneAlt,
-        balance: s.balances.reduce((sum, b) => sum + parseFloat(b.balance), 0)
-      }));
+      // Filter: balance > minBalance AND has phone number
+      .filter(student => {
+        const minBal = minBalance ? parseFloat(minBalance) : 0;
+        return student.balance > minBal && student.phone;
+      })
+      // Sort by highest balance first
+      .sort((a, b) => b.balance - a.balance);
 
     res.json({ 
       success: true, 
@@ -339,11 +380,12 @@ exports.getDefaulters = async (req, res) => {
       count: defaulters.length,
       totalBalance: defaulters.reduce((sum, d) => sum + d.balance, 0)
     });
+
   } catch (error) {
     console.error('Defaulters Error:', error);
     res.status(500).json({ 
       success: false, 
-      message: 'Failed to fetch defaulters' 
+      message: 'Failed to fetch defaulters: ' + error.message 
     });
   }
 };
