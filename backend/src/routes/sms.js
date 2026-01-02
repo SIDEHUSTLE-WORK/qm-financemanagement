@@ -333,27 +333,41 @@ router.get('/defaulters', authenticateToken, async (req, res) => {
       whereClause.classId = classId;
     }
 
-    // Get all active students with their balance info
+    // Get all active students with class info
     const students = await prisma.student.findMany({
       where: whereClause,
       include: {
-        class: true,
-        balances: {
-          orderBy: { createdAt: 'desc' },
-          take: 1  // Get the most recent balance record
-        }
+        class: true
       }
     });
+
+    // Get all student IDs
+    const studentIds = students.map(s => s.id);
+    
+    // Fetch balances separately to avoid complex nested queries
+    const balances = await prisma.studentBalance.findMany({
+      where: {
+        studentId: { in: studentIds }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // Create a map of student ID to their latest balance
+    const balanceMap = {};
+    for (const bal of balances) {
+      if (!balanceMap[bal.studentId]) {
+        balanceMap[bal.studentId] = bal;
+      }
+    }
 
     // Calculate balance for each student and filter defaulters
     const defaulters = students
       .map(student => {
-        // Get the latest balance record
-        const latestBalance = student.balances[0];
+        const latestBalance = balanceMap[student.id];
         
-        const totalFees = latestBalance ? parseFloat(latestBalance.totalFees) : 0;
-        const amountPaid = latestBalance ? parseFloat(latestBalance.amountPaid) : 0;
-        const previousBalance = latestBalance ? parseFloat(latestBalance.previousBalance) : 0;
+        const totalFees = latestBalance ? Number(latestBalance.totalFees) : 0;
+        const amountPaid = latestBalance ? Number(latestBalance.amountPaid) : 0;
+        const previousBalance = latestBalance ? Number(latestBalance.previousBalance) : 0;
         const balance = totalFees + previousBalance - amountPaid;
 
         return {
@@ -371,7 +385,7 @@ router.get('/defaulters', authenticateToken, async (req, res) => {
           balance
         };
       })
-      // Filter to only students with outstanding balance AND have a phone
+      // Filter: balance > minBalance AND has phone number
       .filter(student => {
         const minBal = minBalance ? parseFloat(minBalance) : 0;
         return student.balance > minBal && student.phone;
@@ -389,6 +403,5 @@ router.get('/defaulters', authenticateToken, async (req, res) => {
     });
   }
 });
-
 
 module.exports = router;
