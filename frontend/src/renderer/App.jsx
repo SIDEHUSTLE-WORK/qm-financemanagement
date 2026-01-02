@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, FileText, Download, Send, DollarSign, TrendingUp, Calendar, BarChart3, Receipt, Printer, Mail, LogOut, Settings as SettingsIcon, Edit, Search, Filter, X, Lock, User, Eye, EyeOff, Upload, Shield } from 'lucide-react';
+import { Plus, Trash2, FileText, Download, Send, DollarSign, TrendingUp, Calendar, BarChart3, Receipt, Printer, Mail, LogOut, Settings as SettingsIcon, Edit, Search, Filter, X, Lock, User, Eye, EyeOff, Upload, Shield, MessageSquare } from 'lucide-react';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
@@ -40,6 +40,494 @@ const api = {
   delete: (endpoint) => api.request(endpoint, { method: 'DELETE' })
 };
 
+// SMS Center Component - MOVED OUTSIDE to prevent re-render issues
+const SMSCenter = ({ 
+  smsStats, smsHistory, defaulters, selectedDefaulters, defaultersLoading,
+  smsMessage, setSmsMessage, smsPhone, setSmsPhone, smsTemplate, setSmsTemplate,
+  smsStudentSearch, setSmsStudentSearch, smsSearchResults, selectedSmsStudent,
+  setSelectedSmsStudent, setSmsSearchResults, minBalance, setMinBalance,
+  smsFilterClass, setSmsFilterClass, classes, smsLoading,
+  loadSmsStats, loadSmsHistory, loadDefaulters, loadClasses, searchSmsStudents,
+  selectSmsStudent, applySmsTemplate, sendSms, sendBulkSms,
+  toggleDefaulterSelection, selectAllDefaulters, formatCurrency, smsTemplates
+}) => {
+  const [localSmsTab, setLocalSmsTab] = useState('send');
+  const phoneInputRef = useRef(null);
+  const messageInputRef = useRef(null);
+  const studentSearchRef = useRef(null);
+  const initializedRef = useRef(false);
+
+  useEffect(() => {
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      loadSmsStats();
+      loadSmsHistory();
+      loadClasses();
+    }
+  }, []);
+
+  const handleTabChange = (tab) => {
+    setLocalSmsTab(tab);
+  };
+
+  return (
+    <div className="space-y-6">
+      <h2 className="text-3xl font-bold text-gray-800">📱 SMS Center</h2>
+      
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 text-white">
+          <p className="text-sm opacity-80">Today's SMS</p>
+          <p className="text-2xl font-bold">{smsStats.todaySent || 0}</p>
+          <p className="text-xs opacity-70">Cost: {formatCurrency(smsStats.todayCost || 0)}</p>
+        </div>
+        <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-4 text-white">
+          <p className="text-sm opacity-80">Total SMS Sent</p>
+          <p className="text-2xl font-bold">{smsStats.totalSent || 0}</p>
+        </div>
+        <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-4 text-white">
+          <p className="text-sm opacity-80">Total Cost</p>
+          <p className="text-2xl font-bold">{formatCurrency(smsStats.totalCost || 0)}</p>
+        </div>
+        <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-4 text-white">
+          <p className="text-sm opacity-80">Cost Per SMS</p>
+          <p className="text-2xl font-bold">{formatCurrency(25)}</p>
+        </div>
+      </div>
+
+      {/* Sub-tabs */}
+      <div className="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div className="flex border-b">
+          <button 
+            type="button"
+            onClick={() => handleTabChange('send')} 
+            className={`flex-1 py-4 px-4 text-sm font-medium transition-colors ${localSmsTab === 'send' ? 'bg-blue-50 text-blue-600 border-b-2 border-blue-600' : 'text-gray-600 hover:bg-gray-50'}`}
+          >
+            📱 Send SMS
+          </button>
+          <button 
+            type="button"
+            onClick={() => handleTabChange('defaulters')} 
+            className={`flex-1 py-4 px-4 text-sm font-medium transition-colors ${localSmsTab === 'defaulters' ? 'bg-blue-50 text-blue-600 border-b-2 border-blue-600' : 'text-gray-600 hover:bg-gray-50'}`}
+          >
+            💸 Fee Defaulters
+          </button>
+          <button 
+            type="button"
+            onClick={() => handleTabChange('history')} 
+            className={`flex-1 py-4 px-4 text-sm font-medium transition-colors ${localSmsTab === 'history' ? 'bg-blue-50 text-blue-600 border-b-2 border-blue-600' : 'text-gray-600 hover:bg-gray-50'}`}
+          >
+            📜 SMS History
+          </button>
+        </div>
+
+        {/* Send SMS Tab */}
+        {localSmsTab === 'send' && (
+          <div className="p-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold text-gray-800">Send SMS to Parent</h3>
+                
+                {/* Student Search */}
+                <div className="relative">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Search Student (Optional)</label>
+                  <input 
+                    type="text" 
+                    ref={studentSearchRef}
+                    defaultValue={smsStudentSearch} 
+                    onChange={(e) => searchSmsStudents(e.target.value)} 
+                    placeholder="Type student name..." 
+                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    autoComplete="off"
+                  />
+                  {smsSearchResults.length > 0 && (
+                    <div className="absolute z-20 w-full mt-1 bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                      {smsSearchResults.map(student => (
+                        <div 
+                          key={student.id} 
+                          onClick={() => {
+                            selectSmsStudent(student);
+                            if (studentSearchRef.current) {
+                              studentSearchRef.current.value = `${student.firstName} ${student.lastName}`;
+                            }
+                          }} 
+                          className="px-4 py-2 hover:bg-blue-50 cursor-pointer border-b last:border-b-0"
+                        >
+                          <p className="font-medium">{student.firstName} {student.lastName}</p>
+                          <p className="text-xs text-gray-500">{student.studentNumber}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Selected Student Info */}
+                {selectedSmsStudent && (
+                  <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="font-medium text-blue-800">{selectedSmsStudent.firstName} {selectedSmsStudent.lastName}</p>
+                        <p className="text-sm text-blue-600">Class: {selectedSmsStudent.className || 'N/A'}</p>
+                        <p className="text-sm text-blue-600">Balance: {formatCurrency(selectedSmsStudent.balance || 0)}</p>
+                        <p className="text-sm text-blue-600">Phone: {selectedSmsStudent.phone || 'No phone'}</p>
+                      </div>
+                      <button 
+                        type="button"
+                        onClick={() => { 
+                          setSelectedSmsStudent(null); 
+                          setSmsStudentSearch(''); 
+                          setSmsPhone(''); 
+                          if (studentSearchRef.current) studentSearchRef.current.value = '';
+                          if (phoneInputRef.current) phoneInputRef.current.value = '';
+                        }}
+                        className="text-blue-400 hover:text-blue-600"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Phone Number */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number *</label>
+                  <input 
+                    type="tel" 
+                    ref={phoneInputRef}
+                    defaultValue={smsPhone} 
+                    onChange={(e) => setSmsPhone(e.target.value)} 
+                    placeholder="0772123456 or 256772123456" 
+                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    autoComplete="off"
+                  />
+                </div>
+
+                {/* Template Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Message Template</label>
+                  <select 
+                    value={smsTemplate} 
+                    onChange={(e) => {
+                      const templateId = e.target.value;
+                      setSmsTemplate(templateId);
+                      const template = smsTemplates.find(t => t.id === templateId);
+                      if (template && templateId !== 'custom') {
+                        let msg = template.template;
+                        if (selectedSmsStudent) {
+                          msg = msg.replace('{student}', `${selectedSmsStudent.firstName} ${selectedSmsStudent.lastName}`);
+                          msg = msg.replace('{balance}', formatCurrency(selectedSmsStudent.balance || 0));
+                        }
+                        msg = msg.replace('{amount}', '___').replace('{receipt}', '___');
+                        setSmsMessage(msg);
+                        if (messageInputRef.current) messageInputRef.current.value = msg;
+                      } else { 
+                        setSmsMessage(''); 
+                        if (messageInputRef.current) messageInputRef.current.value = '';
+                      }
+                    }} 
+                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  >
+                    <option value="">-- Select Template --</option>
+                    {smsTemplates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </div>
+
+                {/* Message */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Message * 
+                    <span className={`ml-2 ${smsMessage.length > 160 ? 'text-red-600 font-bold' : 'text-gray-500'}`}>
+                      ({smsMessage.length}/160)
+                    </span>
+                  </label>
+                  <textarea 
+                    ref={messageInputRef}
+                    defaultValue={smsMessage} 
+                    onChange={(e) => setSmsMessage(e.target.value)} 
+                    rows={4} 
+                    maxLength={160} 
+                    placeholder="Type your message here..." 
+                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Variables: {'{student}'}, {'{balance}'}, {'{amount}'}, {'{receipt}'}</p>
+                </div>
+
+                {/* Cost Display */}
+                <div className="bg-yellow-50 p-3 rounded-lg flex justify-between items-center border border-yellow-200">
+                  <span className="text-yellow-800 font-medium">SMS Cost:</span>
+                  <span className="text-yellow-800 font-bold text-lg">{formatCurrency(25)}</span>
+                </div>
+
+                {/* Send Button */}
+                <button 
+                  type="button"
+                  onClick={() => {
+                    const phone = phoneInputRef.current?.value || smsPhone;
+                    const message = messageInputRef.current?.value || smsMessage;
+                    if (!phone || !message) { alert('Please enter phone number and message'); return; }
+                    if (message.length > 160) { alert('Message exceeds 160 characters'); return; }
+                    sendSms(phone, message);
+                  }} 
+                  disabled={smsLoading} 
+                  className="w-full py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-colors"
+                >
+                  {smsLoading ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      Sending...
+                    </>
+                  ) : (
+                    <>
+                      <MessageSquare className="w-5 h-5" />
+                      Send SMS
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Preview Panel */}
+              <div>
+                <h3 className="text-lg font-semibold text-gray-800 mb-4">Message Preview</h3>
+                <div className="bg-gray-100 rounded-xl p-4">
+                  <div className="bg-white rounded-lg p-4 shadow-sm max-w-xs mx-auto">
+                    <div className="flex items-center gap-2 mb-3 pb-2 border-b">
+                      <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white text-xs font-bold">QM</div>
+                      <div>
+                        <p className="font-medium text-sm">QMJS</p>
+                        <p className="text-xs text-gray-500">{smsPhone || 'No number'}</p>
+                      </div>
+                    </div>
+                    <div className="bg-green-100 rounded-lg p-3 text-sm min-h-[60px]">
+                      {smsMessage || 'Your message will appear here...'}
+                    </div>
+                    <p className="text-xs text-gray-400 mt-2 text-right">{new Date().toLocaleTimeString()}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Defaulters Tab */}
+        {localSmsTab === 'defaulters' && (
+          <div className="p-6">
+            {/* Filters */}
+            <div className="flex flex-wrap gap-4 mb-4 p-4 bg-gray-50 rounded-lg">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Minimum Balance</label>
+                <input 
+                  type="number" 
+                  defaultValue={minBalance} 
+                  onChange={(e) => setMinBalance(e.target.value)} 
+                  placeholder="e.g., 100000" 
+                  className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none w-40"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Filter by Class</label>
+                <select 
+                  defaultValue={smsFilterClass} 
+                  onChange={(e) => setSmsFilterClass(e.target.value)} 
+                  className="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                >
+                  <option value="">All Classes</option>
+                  {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+              <div className="flex items-end">
+                <button 
+                  type="button"
+                  onClick={loadDefaulters} 
+                  className="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-medium transition-colors"
+                >
+                  🔍 Filter
+                </button>
+              </div>
+            </div>
+
+            {/* Message for Defaulters */}
+            <div className="bg-blue-50 p-4 rounded-lg mb-4 border border-blue-200">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Message for Selected Defaulters
+                <span className={`ml-2 ${smsMessage.length > 160 ? 'text-red-600 font-bold' : 'text-gray-500'}`}>
+                  ({smsMessage.length}/160)
+                </span>
+              </label>
+              <textarea 
+                defaultValue={smsMessage} 
+                onChange={(e) => setSmsMessage(e.target.value)} 
+                rows={2} 
+                maxLength={160} 
+                placeholder="QMJS: {student} has balance of {balance}. Kindly clear fees. Thank you!" 
+                className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none"
+              />
+              <p className="text-xs text-gray-500 mt-1">Use {'{student}'} and {'{balance}'} - they'll be replaced for each parent</p>
+            </div>
+
+            {/* Selection Summary & Actions */}
+            <div className="flex flex-wrap items-center justify-between bg-green-50 p-4 rounded-lg mb-4 border border-green-200 gap-4">
+              <div>
+                <span className="font-bold text-green-800 text-lg">
+                  Selected: {selectedDefaulters.length} / {defaulters.length} students
+                </span>
+                <span className="ml-4 text-green-600">
+                  Total Balance: {formatCurrency(selectedDefaulters.reduce((sum, s) => sum + s.balance, 0))}
+                </span>
+              </div>
+              <div className="flex gap-2">
+                <button 
+                  type="button"
+                  onClick={selectAllDefaulters} 
+                  className="px-4 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 font-medium transition-colors"
+                >
+                  {selectedDefaulters.length === defaulters.length ? 'Deselect All' : 'Select All'}
+                </button>
+                <button 
+                  type="button"
+                  onClick={sendBulkSms} 
+                  disabled={smsLoading || selectedDefaulters.length === 0 || !smsMessage} 
+                  className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium flex items-center gap-2 transition-colors"
+                >
+                  {smsLoading ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      Sending...
+                    </>
+                  ) : (
+                    <>📱 Send SMS ({formatCurrency(selectedDefaulters.length * 25)})</>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Defaulters Table */}
+            <div className="overflow-x-auto border rounded-lg">
+              <table className="w-full">
+                <thead>
+                  <tr className="bg-gray-100">
+                    <th className="py-3 px-4 text-left">
+                      <input 
+                        type="checkbox" 
+                        checked={selectedDefaulters.length === defaulters.length && defaulters.length > 0} 
+                        onChange={selectAllDefaulters}
+                        className="w-4 h-4 rounded"
+                      />
+                    </th>
+                    <th className="py-3 px-4 text-left text-sm font-semibold text-gray-700">Student</th>
+                    <th className="py-3 px-4 text-left text-sm font-semibold text-gray-700">Class</th>
+                    <th className="py-3 px-4 text-left text-sm font-semibold text-gray-700">Parent Phone</th>
+                    <th className="py-3 px-4 text-right text-sm font-semibold text-gray-700">Balance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {defaultersLoading ? (
+                    <tr>
+                      <td colSpan="5" className="py-12 text-center text-gray-500">
+                        <div className="flex flex-col items-center">
+                          <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mb-2"></div>
+                          Loading defaulters...
+                        </div>
+                      </td>
+                    </tr>
+                  ) : defaulters.length === 0 ? (
+                    <tr>
+                      <td colSpan="5" className="py-12 text-center text-gray-500">
+                        No defaulters found. Try adjusting filters.
+                      </td>
+                    </tr>
+                  ) : (
+                    defaulters.map(student => (
+                      <tr 
+                        key={student.id} 
+                        className={`border-b hover:bg-gray-50 cursor-pointer transition-colors ${selectedDefaulters.find(s => s.id === student.id) ? 'bg-blue-50' : ''}`}
+                        onClick={() => toggleDefaulterSelection(student)}
+                      >
+                        <td className="py-3 px-4">
+                          <input 
+                            type="checkbox" 
+                            checked={!!selectedDefaulters.find(s => s.id === student.id)} 
+                            onChange={() => toggleDefaulterSelection(student)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-4 h-4 rounded"
+                          />
+                        </td>
+                        <td className="py-3 px-4">
+                          <p className="font-medium text-gray-800">{student.fullName}</p>
+                          <p className="text-xs text-gray-500">{student.studentNumber}</p>
+                        </td>
+                        <td className="py-3 px-4 text-purple-600 font-medium">{student.className}</td>
+                        <td className="py-3 px-4 text-gray-600">{student.phone || <span className="text-red-500">No phone</span>}</td>
+                        <td className="py-3 px-4 text-right text-red-600 font-bold">{formatCurrency(student.balance)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* History Tab */}
+        {localSmsTab === 'history' && (
+          <div className="p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold text-gray-800">SMS History (Last 100)</h3>
+              <button 
+                type="button"
+                onClick={loadSmsHistory}
+                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium transition-colors"
+              >
+                🔄 Refresh
+              </button>
+            </div>
+            <div className="overflow-x-auto border rounded-lg">
+              <table className="w-full">
+                <thead>
+                  <tr className="bg-gray-100">
+                    <th className="py-3 px-4 text-left text-sm font-semibold text-gray-700">Date</th>
+                    <th className="py-3 px-4 text-left text-sm font-semibold text-gray-700">Phone</th>
+                    <th className="py-3 px-4 text-left text-sm font-semibold text-gray-700">Student</th>
+                    <th className="py-3 px-4 text-left text-sm font-semibold text-gray-700">Message</th>
+                    <th className="py-3 px-4 text-center text-sm font-semibold text-gray-700">Status</th>
+                    <th className="py-3 px-4 text-right text-sm font-semibold text-gray-700">Cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {smsHistory.length === 0 ? (
+                    <tr>
+                      <td colSpan="6" className="py-12 text-center text-gray-500">
+                        No SMS history yet. Send your first SMS!
+                      </td>
+                    </tr>
+                  ) : (
+                    smsHistory.map(sms => (
+                      <tr key={sms.id} className="border-b hover:bg-gray-50">
+                        <td className="py-3 px-4 text-sm text-gray-600">{new Date(sms.createdAt).toLocaleString()}</td>
+                        <td className="py-3 px-4 text-sm text-gray-800 font-medium">{sms.phone}</td>
+                        <td className="py-3 px-4 text-sm text-gray-600">{sms.studentName || '-'}</td>
+                        <td className="py-3 px-4 text-sm text-gray-600 max-w-xs">
+                          <span className="truncate block" title={sms.message}>{sms.message}</span>
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <span className={`px-3 py-1 rounded-full text-xs font-medium ${sms.status === 'sent' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                            {sms.status === 'sent' ? '✓ Sent' : '✗ Failed'}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-sm text-right font-medium text-gray-800">{formatCurrency(sms.cost)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+
 const SchoolFinanceApp = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
@@ -64,6 +552,24 @@ const SchoolFinanceApp = () => {
   const [editingIncome, setEditingIncome] = useState(null);
   const [editingExpense, setEditingExpense] = useState(null);
   
+  // SMS Center State
+  const [smsTab, setSmsTab] = useState('send');
+  const [smsPhone, setSmsPhone] = useState('');
+  const [smsMessage, setSmsMessage] = useState('');
+  const [smsTemplate, setSmsTemplate] = useState('');
+  const [smsLoading, setSmsLoading] = useState(false);
+  const [smsHistory, setSmsHistory] = useState([]);
+  const [smsStats, setSmsStats] = useState({ totalSent: 0, todaySent: 0, totalCost: 0, todayCost: 0 });
+  const [defaulters, setDefaulters] = useState([]);
+  const [selectedDefaulters, setSelectedDefaulters] = useState([]);
+  const [defaultersLoading, setDefaultersLoading] = useState(false);
+  const [smsStudentSearch, setSmsStudentSearch] = useState('');
+  const [smsSearchResults, setSmsSearchResults] = useState([]);
+  const [selectedSmsStudent, setSelectedSmsStudent] = useState(null);
+  const [minBalance, setMinBalance] = useState('');
+  const [smsFilterClass, setSmsFilterClass] = useState('');
+  const [classes, setClasses] = useState([]);
+  
   // API Categories State
   const [apiIncomeCategories, setApiIncomeCategories] = useState([]);
   const [apiExpenseCategories, setApiExpenseCategories] = useState([]);
@@ -75,8 +581,10 @@ const SchoolFinanceApp = () => {
   const [incomeDateFilter, setIncomeDateFilter] = useState('');
   const [expenseDateFilter, setExpenseDateFilter] = useState('');
   
-  const editIncomeRef = useRef(null);
-  const editExpenseRef = useRef(null);
+    const editIncomeRef = useRef(null);
+    const defaultersLoadingRef = useRef(false);
+    const smsInitializedRef = useRef(false);
+    const messageInputRef = useRef(null);
   
   const incomeFormRef = useRef({
     date: new Date().toISOString().split('T')[0],
@@ -135,7 +643,8 @@ const SchoolFinanceApp = () => {
         amount: parseFloat(item.amount),
         receiptNo: item.receiptNumber,
         paymentMethod: item.paymentMethod?.replace('_', ' ').toUpperCase() || 'Cash',
-        studentName: item.student?.fullName || '',
+        studentName: item.student?.fullName || (item.student ? `${item.student.firstName || ''} ${item.student.lastName || ''}`.trim() : ''),
+        studentClass: item.student?.class?.name || '',
         studentId: item.studentId
       }));
       setIncomeEntries(mapped);
@@ -158,6 +667,148 @@ const SchoolFinanceApp = () => {
       setExpenseEntries(mapped);
     }
   };
+  // ==================== SMS FUNCTIONS ====================
+  const smsTemplates = [
+    { id: 'receipt', name: 'Payment Receipt', template: 'QMJS: Received {amount} for {student}. Bal: {balance}. Rcpt: {receipt}. Thank you!' },
+    { id: 'reminder', name: 'Fee Reminder', template: 'QMJS: {student} has balance of {balance}. Kindly clear fees. Thank you!' },
+    { id: 'general', name: 'General Reminder', template: 'QMJS: School fees for Term 1 is due. Clear pending balances. Contact 0200939322' },
+    { id: 'custom', name: 'Custom Message', template: '' }
+  ];
+
+  const loadSmsStats = async () => {
+    if (smsStats.totalSent !== 0 && smsStats.todaySent !== undefined) return; // Already loaded
+    const res = await api.get('/sms/stats');
+    if (res.success) setSmsStats(res.data);
+  };
+
+  const loadSmsHistory = async () => {
+    if (smsHistory.length > 0) return; // Already loaded
+    const res = await api.get('/sms/history');
+    if (res.success) setSmsHistory(res.data || []);
+  };
+
+  const loadDefaulters = async () => {
+    if (defaultersLoadingRef.current) return; // Prevent concurrent calls
+    defaultersLoadingRef.current = true;
+    setDefaultersLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (minBalance) params.append('minBalance', minBalance);
+      if (smsFilterClass) params.append('classId', smsFilterClass);
+      const res = await api.get(`/sms/defaulters?${params.toString()}`);
+      if (res.success) {
+        setDefaulters(res.data || []);
+      } else {
+        console.error('Defaulters API error:', res.message);
+        setDefaulters([]); // Set empty to prevent retry loops
+      }
+    } catch (error) {
+      console.error('Defaulters fetch error:', error);
+      setDefaulters([]);
+    } finally {
+      setDefaultersLoading(false);
+      defaultersLoadingRef.current = false;
+    }
+  };
+
+  const loadClasses = async () => {
+    if (classes.length > 0) return; // Already loaded
+    const res = await api.get('/students/classes');
+    if (res.success) {
+      const dataArray = Array.isArray(res.data) ? res.data : (res.data?.classes || []);
+      setClasses(dataArray);
+    }
+  };
+
+  const searchSmsStudents = async (query) => {
+    if (query.length < 2) { setSmsSearchResults([]); return; }
+    const res = await api.get(`/students/search?q=${encodeURIComponent(query)}`);
+    if (res.success) setSmsSearchResults(Array.isArray(res.data) ? res.data : []);
+  };
+
+  const selectSmsStudent = async (student) => {
+    setSmsSearchResults([]);
+    setSmsStudentSearch(`${student.firstName} ${student.lastName}`);
+    const studentRes = await api.get(`/students/${student.id}`);
+    const balanceRes = await api.get(`/students/${student.id}/balance`);
+    if (studentRes.success) {
+      const fullStudent = {
+        ...student, ...studentRes.data,
+        phone: studentRes.data.parentPhone || studentRes.data.parentPhoneAlt || '',
+        className: studentRes.data.class?.name || studentRes.data.className || '',
+        balance: balanceRes.success ? (balanceRes.data?.balance || 0) : 0
+      };
+      setSelectedSmsStudent(fullStudent);
+      setSmsPhone(fullStudent.phone);
+    }
+  };
+
+  const applySmsTemplate = (templateId) => {
+    setSmsTemplate(templateId);
+    const template = smsTemplates.find(t => t.id === templateId);
+    if (template && templateId !== 'custom') {
+      let msg = template.template;
+      if (selectedSmsStudent) {
+        msg = msg.replace('{student}', `${selectedSmsStudent.firstName} ${selectedSmsStudent.lastName}`);
+        msg = msg.replace('{balance}', formatCurrency(selectedSmsStudent.balance || 0));
+      }
+      // Remove unused placeholders
+      msg = msg.replace('{amount}', '___').replace('{receipt}', '___');
+      setSmsMessage(msg);
+      if (messageInputRef.current) messageInputRef.current.value = msg;
+    } else { 
+      setSmsMessage(''); 
+      if (messageInputRef.current) messageInputRef.current.value = '';
+    }
+  };
+
+  const sendSms = async (phone, message) => {
+    const finalPhone = phone || smsPhone;
+    const finalMessage = message || smsMessage;
+    if (!finalPhone || !finalMessage) { alert('Please enter phone number and message'); return; }
+    if (finalMessage.length > 160) { alert('Message exceeds 160 characters'); return; }
+    setSmsLoading(true);
+    const res = await api.post('/sms/send', {
+      phone: finalPhone, message: finalMessage,
+      studentId: selectedSmsStudent?.id || null,
+      studentName: selectedSmsStudent ? `${selectedSmsStudent.firstName} ${selectedSmsStudent.lastName}` : null
+    });
+    setSmsLoading(false);
+    if (res.success) {
+      alert(`SMS sent successfully! Cost: ${formatCurrency(25)}`);
+      setSmsMessage(''); setSmsPhone(''); setSelectedSmsStudent(null); setSmsStudentSearch(''); setSmsTemplate('');
+      loadSmsStats(); loadSmsHistory();
+    } else { alert('Failed to send SMS: ' + res.message); }
+  };
+
+  const sendBulkSms = async () => {
+    if (selectedDefaulters.length === 0) { alert('Please select at least one student'); return; }
+    if (!smsMessage) { alert('Please enter a message'); return; }
+    if (smsMessage.length > 160) { alert('Message exceeds 160 characters'); return; }
+    const confirmSend = window.confirm(`Send SMS to ${selectedDefaulters.length} parents?\n\nTotal Cost: ${formatCurrency(selectedDefaulters.length * 25)}\n\nMessage:\n${smsMessage}`);
+    if (!confirmSend) return;
+    setSmsLoading(true);
+    const messages = selectedDefaulters.map(student => ({
+      phone: student.phone,
+      message: smsMessage.replace('{student}', student.fullName).replace('{balance}', formatCurrency(student.balance)),
+      studentId: student.id, studentName: student.fullName
+    }));
+    const res = await api.post('/sms/send-bulk', { messages });
+    setSmsLoading(false);
+    if (res.success) {
+      alert(`${res.count} SMS sent successfully!\n\nTotal Cost: ${formatCurrency(res.totalCost)}`);
+      setSelectedDefaulters([]); setSmsMessage(''); loadSmsStats(); loadSmsHistory();
+    } else { alert('Failed to send SMS: ' + res.message); }
+  };
+
+  const toggleDefaulterSelection = (student) => {
+    setSelectedDefaulters(prev => prev.find(s => s.id === student.id) ? prev.filter(s => s.id !== student.id) : [...prev, student]);
+  };
+
+  const selectAllDefaulters = () => {
+    setSelectedDefaulters(selectedDefaulters.length === defaulters.length ? [] : [...defaulters]);
+  };
+
   const logAction = (action, type, details) => {
     const log = {
       id: Date.now(),
@@ -319,7 +970,7 @@ const SchoolFinanceApp = () => {
     return calculateTotals(oldBalanceEntries);
   };
 
-  const getTodayIncome = () => calculateTotals(incomeEntries.filter(e => e.category !== 'Old Balance'), selectedDate);
+  const getTodayIncome = () => calculateTotals(incomeEntries.filter(e => e.category !== 'Old Balance' && !e.studentId), selectedDate);
   const getTodayExpense = () => calculateTotals(expenseEntries, selectedDate);
   const getTodayNet = () => getTodayIncome() - getTodayExpense();
 
@@ -379,9 +1030,6 @@ const SchoolFinanceApp = () => {
     
     logAction('ADD', 'INCOME', `Added ${entry.category}: ${entry.description} - ${formatCurrency(entry.amount)} (Receipt: ${entry.receiptNo})`);
     rerender();
-    
-    // Auto-print receipt
-    printReceipt(entry);
   };
 
   const addExpense = async () => {
@@ -987,10 +1635,70 @@ const SchoolFinanceApp = () => {
 }
 
   const Dashboard = () => {
-    const totalIncome = calculateTotals(incomeEntries.filter(e => e.category !== 'Old Balance'));
+    // Total Income excludes School Fees Collection (entries with studentId)
+    const totalIncome = calculateTotals(incomeEntries.filter(e => e.category !== 'Old Balance' && !e.studentId));
     const totalExpense = calculateTotals(expenseEntries);
     const oldBalance = getOldBalance();
     const netAmount = totalIncome - totalExpense + oldBalance;
+    
+    const today = selectedDate;
+    // Only count fees from School Fees Collection tab (entries with studentId)
+    const todaySchoolFees = incomeEntries
+      .filter(e => e.date === today && e.studentId)
+      .reduce((sum, e) => sum + Number(e.amount), 0);
+    
+    // School Fees Modal State
+    const [showFeesModal, setShowFeesModal] = useState(false);
+    const [feesDateRange, setFeesDateRange] = useState('today');
+    const [feesStartDate, setFeesStartDate] = useState(today);
+    const [feesEndDate, setFeesEndDate] = useState(today);
+    
+    // Get filtered school fees based on date range
+    const getFilteredSchoolFees = () => {
+      let start, end;
+      const todayDate = new Date();
+      const todayStr = todayDate.toISOString().split('T')[0];
+      
+      switch(feesDateRange) {
+        case 'today':
+          start = todayStr;
+          end = todayStr;
+          break;
+        case 'week':
+          const weekStart = new Date(todayDate);
+          weekStart.setDate(todayDate.getDate() - todayDate.getDay());
+          start = weekStart.toISOString().split('T')[0];
+          end = todayStr;
+          break;
+        case 'month':
+          const monthStart = new Date(todayDate.getFullYear(), todayDate.getMonth(), 1);
+          start = monthStart.toISOString().split('T')[0];
+          end = todayStr;
+          break;
+        case 'term':
+          const termStart = new Date(todayDate.getFullYear(), Math.floor(todayDate.getMonth() / 3) * 3, 1);
+          start = termStart.toISOString().split('T')[0];
+          end = todayStr;
+          break;
+        case 'year':
+          const yearStart = new Date(todayDate.getFullYear(), 0, 1);
+          start = yearStart.toISOString().split('T')[0];
+          end = todayStr;
+          break;
+        case 'custom':
+          start = feesStartDate;
+          end = feesEndDate;
+          break;
+        default:
+          start = todayStr;
+          end = todayStr;
+      }
+      
+      return incomeEntries.filter(e => e.studentId && e.date >= start && e.date <= end);
+    };
+    
+    const filteredFees = showFeesModal ? getFilteredSchoolFees() : [];
+    const filteredFeesTotal = filteredFees.reduce((sum, e) => sum + Number(e.amount), 0);
 
     return (
       <div className="space-y-6">
@@ -1007,7 +1715,7 @@ const SchoolFinanceApp = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
           <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-6 text-white shadow-lg">
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-sm font-medium opacity-90">Today's Income</h3>
@@ -1015,6 +1723,18 @@ const SchoolFinanceApp = () => {
             </div>
             <p className="text-2xl font-bold">{formatCurrency(getTodayIncome())}</p>
             <p className="text-xs opacity-75 mt-2">{incomeEntries.filter(e => e.date === selectedDate && e.category !== 'Old Balance').length} transactions</p>
+          </div>
+
+          <div 
+            onClick={() => setShowFeesModal(true)}
+            className="bg-gradient-to-br from-teal-500 to-teal-600 rounded-xl p-6 text-white shadow-lg cursor-pointer hover:from-teal-600 hover:to-teal-700 transition-all transform hover:scale-105"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-medium opacity-90">Today's School Fees</h3>
+              <Receipt className="w-5 h-5" />
+            </div>
+            <p className="text-2xl font-bold">{formatCurrency(todaySchoolFees)}</p>
+            <p className="text-xs opacity-75 mt-2">Fees collected today • Click to view details</p>
           </div>
 
           <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-6 text-white shadow-lg">
@@ -1078,6 +1798,154 @@ const SchoolFinanceApp = () => {
               ))}
           </div>
         </div>
+        {/* School Fees Details Modal */}
+        {showFeesModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl shadow-xl p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-2xl font-bold text-gray-800">💰 School Fees Collection Details</h3>
+                <button onClick={() => setShowFeesModal(false)} className="text-gray-500 hover:text-gray-700">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              {/* Date Range Filter */}
+              <div className="bg-gray-50 rounded-lg p-4 mb-6">
+                <div className="flex flex-wrap items-center gap-3 mb-4">
+                  <span className="font-medium text-gray-700">Period:</span>
+                  {[
+                    { value: 'today', label: 'Today' },
+                    { value: 'week', label: 'This Week' },
+                    { value: 'month', label: 'This Month' },
+                    { value: 'term', label: 'This Term' },
+                    { value: 'year', label: 'This Year' },
+                    { value: 'custom', label: 'Custom' }
+                  ].map(option => (
+                    <button
+                      key={option.value}
+                      onClick={() => setFeesDateRange(option.value)}
+                      className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                        feesDateRange === option.value
+                          ? 'bg-teal-600 text-white'
+                          : 'bg-white text-gray-700 hover:bg-gray-200 border border-gray-300'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                
+                {feesDateRange === 'custom' && (
+                  <div className="flex gap-4">
+                    <div>
+                      <label className="block text-sm text-gray-600 mb-1">Start Date</label>
+                      <input
+                        type="date"
+                        value={feesStartDate}
+                        onChange={(e) => setFeesStartDate(e.target.value)}
+                        className="px-4 py-2 border border-gray-300 rounded-lg"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-600 mb-1">End Date</label>
+                      <input
+                        type="date"
+                        value={feesEndDate}
+                        onChange={(e) => setFeesEndDate(e.target.value)}
+                        className="px-4 py-2 border border-gray-300 rounded-lg"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Summary Card */}
+              <div className="bg-gradient-to-r from-teal-500 to-teal-600 rounded-xl p-6 text-white mb-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="text-center">
+                    <p className="text-sm opacity-80">Total Collected</p>
+                    <p className="text-3xl font-bold">{formatCurrency(filteredFeesTotal)}</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm opacity-80">Number of Payments</p>
+                    <p className="text-3xl font-bold">{filteredFees.length}</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm opacity-80">Unique Students</p>
+                    <p className="text-3xl font-bold">{new Set(filteredFees.map(f => f.studentId)).size}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Payments Table */}
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b-2 border-gray-200">
+                      <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Receipt No</th>
+                      <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Date</th>
+                      <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Student Name</th>
+                      <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Class</th>
+                      <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Payment Method</th>
+                      <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Amount</th>
+                      <th className="text-center py-3 px-4 text-sm font-semibold text-gray-700">Print</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredFees.length === 0 ? (
+                      <tr>
+                        <td colSpan="7" className="text-center py-8 text-gray-500">
+                          No school fees collected in this period
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredFees
+                        .sort((a, b) => new Date(b.date) - new Date(a.date))
+                        .map((payment) => (
+                          <tr key={payment.id} className="border-b border-gray-100 hover:bg-gray-50">
+                            <td className="py-3 px-4 text-sm font-medium text-blue-600">{payment.receiptNo}</td>
+                            <td className="py-3 px-4 text-sm text-gray-600">{payment.date}</td>
+                            <td className="py-3 px-4 text-sm text-gray-800 font-medium">{payment.studentName || 'N/A'}</td>
+                            <td className="py-3 px-4 text-sm text-purple-600 font-medium">{payment.studentClass || 'N/A'}</td>
+                            <td className="py-3 px-4 text-sm text-gray-600">{payment.paymentMethod}</td>
+                            <td className="py-3 px-4 text-sm text-green-600 font-bold text-right">{formatCurrency(payment.amount)}</td>
+                            <td className="py-3 px-4 text-center">
+                              <button
+                                onClick={() => printReceipt(payment)}
+                                className="text-purple-600 hover:text-purple-700"
+                                title="Print Receipt"
+                              >
+                                <Printer className="w-4 h-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                    )}
+                  </tbody>
+                  {filteredFees.length > 0 && (
+                    <tfoot>
+                      <tr className="bg-teal-50 font-bold">
+                        <td colSpan="5" className="py-3 px-4 text-sm text-gray-800">TOTAL</td>
+                        <td className="py-3 px-4 text-sm text-teal-700 text-right">{formatCurrency(filteredFeesTotal)}</td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+
+              {/* Close Button */}
+              <div className="mt-6 flex justify-end">
+                <button
+                  onClick={() => setShowFeesModal(false)}
+                  className="bg-gray-300 hover:bg-gray-400 text-gray-800 px-6 py-2 rounded-lg font-medium"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -1119,7 +1987,7 @@ const SchoolFinanceApp = () => {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Student Name (Optional)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Income Title (Optional)</label>
               <input
                 key="income-student"
                 type="text"
@@ -1128,7 +1996,7 @@ const SchoolFinanceApp = () => {
                   incomeFormRef.current.studentName = e.target.value;
                 }}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                placeholder="Enter student name"
+                placeholder="Today's Total Fees Collections"
               />
             </div>
             <div>
@@ -1624,38 +2492,508 @@ const SchoolFinanceApp = () => {
   const Reports = () => {
     const [reportType, setReportType] = useState('daily');
     const [categoryReportType, setCategoryReportType] = useState('income');
+    const [analyticsData, setAnalyticsData] = useState(null);
+    const [loadingAnalytics, setLoadingAnalytics] = useState(true);
+    const [activeTab, setActiveTab] = useState('analytics'); // 'analytics' or 'generate'
     const oldBalance = getOldBalance();
+
+    // Date range states
+    const [dateRange, setDateRange] = useState('today'); // today, week, month, term, year, custom
+    
+    // Ref to prevent recalculation loop
+    const isCalculatingRef = useRef(false);
+    
+    // Calculate date ranges
+    const getDateRange = () => {
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
+      
+      switch(dateRange) {
+        case 'today':
+          return { start: todayStr, end: todayStr, label: 'Today' };
+        case 'week':
+          const weekStart = new Date(today);
+          weekStart.setDate(today.getDate() - today.getDay());
+          return { start: weekStart.toISOString().split('T')[0], end: todayStr, label: 'This Week' };
+        case 'month':
+          const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+          return { start: monthStart.toISOString().split('T')[0], end: todayStr, label: 'This Month' };
+        case 'term':
+          // Assume term is 3 months
+          const termStart = new Date(today.getFullYear(), Math.floor(today.getMonth() / 3) * 3, 1);
+          return { start: termStart.toISOString().split('T')[0], end: todayStr, label: 'This Term' };
+        case 'year':
+          const yearStart = new Date(today.getFullYear(), 0, 1);
+          return { start: yearStart.toISOString().split('T')[0], end: todayStr, label: 'This Year' };
+        case 'custom':
+          return { start: startDate, end: endDate, label: `${startDate} to ${endDate}` };
+        default:
+          return { start: todayStr, end: todayStr, label: 'Today' };
+      }
+    };
+
+    // Calculate analytics - with loop prevention
+    useEffect(() => {
+      if (isCalculatingRef.current) return;
+      isCalculatingRef.current = true;
+      calculateAnalytics();
+      // Reset after a short delay to allow future legitimate updates
+      setTimeout(() => { isCalculatingRef.current = false; }, 500);
+    }, [dateRange, startDate, endDate]);
+
+    const calculateAnalytics = () => {
+      // Only show loading on first load, not on updates (prevents blinking)
+      if (!analyticsData) setLoadingAnalytics(true);
+      const range = getDateRange();
+      
+      // Filter data by date range - exclude School Fees Collection (entries with studentId)
+      const filteredIncome = incomeEntries.filter(e => 
+        e.date >= range.start && e.date <= range.end && e.category !== 'Old Balance' && !e.studentId
+      );
+      
+      // School Fees Collection entries (with studentId) - separate
+      const filteredSchoolFees = incomeEntries.filter(e => 
+        e.date >= range.start && e.date <= range.end && e.studentId
+      );
+      const filteredExpenses = expenseEntries.filter(e => 
+        e.date >= range.start && e.date <= range.end
+      );
+
+      // Income by category
+      const incomeByCategory = {};
+      filteredIncome.forEach(e => {
+        if (!incomeByCategory[e.category]) {
+          incomeByCategory[e.category] = 0;
+        }
+        incomeByCategory[e.category] += Number(e.amount);
+      });
+
+      // Expenses by category
+      const expensesByCategory = {};
+      filteredExpenses.forEach(e => {
+        if (!expensesByCategory[e.category]) {
+          expensesByCategory[e.category] = 0;
+        }
+        expensesByCategory[e.category] += Number(e.amount);
+      });
+
+      // Payment methods breakdown
+      const paymentMethods = {};
+      filteredIncome.forEach(e => {
+        const method = e.paymentMethod || 'Cash';
+        if (!paymentMethods[method]) {
+          paymentMethods[method] = 0;
+        }
+        paymentMethods[method] += Number(e.amount);
+      });
+
+      // School Fees specific totals - from filteredSchoolFees
+      const schoolFeesTotal = filteredSchoolFees.reduce((sum, e) => sum + Number(e.amount), 0);
+      const schoolFeesCount = filteredSchoolFees.length;
+
+      // Daily breakdown for charts
+      const dailyData = {};
+      filteredIncome.forEach(e => {
+        if (!dailyData[e.date]) {
+          dailyData[e.date] = { date: e.date, income: 0, expenses: 0 };
+        }
+        dailyData[e.date].income += Number(e.amount);
+      });
+      filteredExpenses.forEach(e => {
+        if (!dailyData[e.date]) {
+          dailyData[e.date] = { date: e.date, income: 0, expenses: 0 };
+        }
+        dailyData[e.date].expenses += Number(e.amount);
+      });
+
+      // Today's data - exclude School Fees Collection from income
+      const today = new Date().toISOString().split('T')[0];
+      const todayIncome = incomeEntries.filter(e => e.date === today && e.category !== 'Old Balance' && !e.studentId);
+      const todayExpenses = expenseEntries.filter(e => e.date === today);
+
+      // Today's school fees - only from School Fees Collection tab (entries with studentId)
+      const todaySchoolFees = incomeEntries.filter(e => e.date === today && e.studentId);
+
+      setAnalyticsData({
+        totalIncome: filteredIncome.reduce((sum, e) => sum + Number(e.amount), 0),
+        totalExpenses: filteredExpenses.reduce((sum, e) => sum + Number(e.amount), 0),
+        incomeCount: filteredIncome.length,
+        expenseCount: filteredExpenses.length,
+        incomeByCategory: Object.entries(incomeByCategory).map(([name, value]) => ({ name, value })),
+        expensesByCategory: Object.entries(expensesByCategory).map(([name, value]) => ({ name, value })),
+        paymentMethods: Object.entries(paymentMethods).map(([name, value]) => ({ name, value })),
+        dailyTrend: Object.values(dailyData).sort((a, b) => a.date.localeCompare(b.date)),
+        todayIncome: todayIncome.reduce((sum, e) => sum + Number(e.amount), 0),
+        todayExpenses: todayExpenses.reduce((sum, e) => sum + Number(e.amount), 0),
+        todayTransactions: todayIncome.length + todayExpenses.length,
+        todaySchoolFees: todaySchoolFees.reduce((sum, e) => sum + Number(e.amount), 0),
+        schoolFeesTotal,
+        schoolFeesCount,
+        dateRange: range
+      });
+      
+      setLoadingAnalytics(false);
+    };
+
+    // Colors for charts
+    const COLORS = ['#10B981', '#3B82F6', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#14B8A6', '#F97316', '#6366F1', '#84CC16'];
+    
+    // Simple Pie Chart Component
+    const SimplePieChart = ({ data, title, colors = COLORS }) => {
+      if (!data || data.length === 0) {
+        return (
+          <div className="bg-white rounded-xl shadow-md p-6">
+            <h3 className="text-lg font-bold text-gray-800 mb-4">{title}</h3>
+            <div className="text-center py-8 text-gray-500">No data available</div>
+          </div>
+        );
+      }
+
+      const total = data.reduce((sum, item) => sum + item.value, 0);
+      let currentAngle = 0;
+
+      return (
+        <div className="bg-white rounded-xl shadow-md p-6">
+          <h3 className="text-lg font-bold text-gray-800 mb-4">{title}</h3>
+          <div className="flex items-center justify-center">
+            <svg width="200" height="200" viewBox="0 0 200 200">
+              {data.map((item, index) => {
+                const percentage = (item.value / total) * 100;
+                const angle = (percentage / 100) * 360;
+                const startAngle = currentAngle;
+                currentAngle += angle;
+                
+                const x1 = 100 + 80 * Math.cos((startAngle - 90) * Math.PI / 180);
+                const y1 = 100 + 80 * Math.sin((startAngle - 90) * Math.PI / 180);
+                const x2 = 100 + 80 * Math.cos((startAngle + angle - 90) * Math.PI / 180);
+                const y2 = 100 + 80 * Math.sin((startAngle + angle - 90) * Math.PI / 180);
+                const largeArcFlag = angle > 180 ? 1 : 0;
+
+                return (
+                  <path
+                    key={index}
+                    d={`M 100 100 L ${x1} ${y1} A 80 80 0 ${largeArcFlag} 1 ${x2} ${y2} Z`}
+                    fill={colors[index % colors.length]}
+                    stroke="white"
+                    strokeWidth="2"
+                  />
+                );
+              })}
+              <circle cx="100" cy="100" r="40" fill="white" />
+              <text x="100" y="95" textAnchor="middle" className="text-xs font-bold fill-gray-800">Total</text>
+              <text x="100" y="115" textAnchor="middle" className="text-sm font-bold fill-gray-800">{formatCurrency(total).replace(' UGX', '')}</text>
+            </svg>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            {data.slice(0, 6).map((item, index) => (
+              <div key={index} className="flex items-center gap-2 text-sm">
+                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: colors[index % colors.length] }}></div>
+                <span className="text-gray-600 truncate">{item.name}</span>
+                <span className="font-bold text-gray-800 ml-auto">{((item.value / total) * 100).toFixed(0)}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    };
+
+    // Simple Bar Chart Component
+    const SimpleBarChart = ({ data, title }) => {
+      if (!data || data.length === 0) {
+        return (
+          <div className="bg-white rounded-xl shadow-md p-6">
+            <h3 className="text-lg font-bold text-gray-800 mb-4">{title}</h3>
+            <div className="text-center py-8 text-gray-500">No data available</div>
+          </div>
+        );
+      }
+
+      const maxValue = Math.max(...data.map(d => Math.max(d.income, d.expenses)));
+
+      return (
+        <div className="bg-white rounded-xl shadow-md p-6">
+          <h3 className="text-lg font-bold text-gray-800 mb-4">{title}</h3>
+          <div className="flex items-end gap-2 h-48 overflow-x-auto">
+            {data.slice(-14).map((item, index) => (
+              <div key={index} className="flex flex-col items-center min-w-[40px]">
+                <div className="flex gap-1 items-end h-36">
+                  <div 
+                    className="w-4 bg-green-500 rounded-t"
+                    style={{ height: `${(item.income / maxValue) * 100}%`, minHeight: item.income > 0 ? '4px' : '0' }}
+                    title={`Income: ${formatCurrency(item.income)}`}
+                  ></div>
+                  <div 
+                    className="w-4 bg-red-500 rounded-t"
+                    style={{ height: `${(item.expenses / maxValue) * 100}%`, minHeight: item.expenses > 0 ? '4px' : '0' }}
+                    title={`Expenses: ${formatCurrency(item.expenses)}`}
+                  ></div>
+                </div>
+                <span className="text-xs text-gray-500 mt-1 transform -rotate-45 origin-top-left">
+                  {item.date.slice(5)}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-center gap-6 mt-4">
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 bg-green-500 rounded"></div>
+              <span className="text-sm text-gray-600">Income</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 bg-red-500 rounded"></div>
+              <span className="text-sm text-gray-600">Expenses</span>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // Analytics Dashboard
+    const AnalyticsDashboard = () => {
+      if (loadingAnalytics || !analyticsData) {
+        return (
+          <div className="text-center py-12">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+            <p className="text-gray-500 mt-4">Loading analytics...</p>
+          </div>
+        );
+      }
+
+      const netAmount = analyticsData.totalIncome - analyticsData.totalExpenses;
+
+      return (
+        <div className="space-y-6">
+          {/* Date Range Selector */}
+          <div className="bg-white rounded-xl shadow-md p-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="font-medium text-gray-700">Period:</span>
+              {[
+                { value: 'today', label: 'Today' },
+                { value: 'week', label: 'This Week' },
+                { value: 'month', label: 'This Month' },
+                { value: 'term', label: 'This Term' },
+                { value: 'year', label: 'This Year' },
+                { value: 'custom', label: 'Custom' }
+              ].map(option => (
+                <button
+                  key={option.value}
+                  onClick={() => setDateRange(option.value)}
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                    dateRange === option.value
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            {dateRange === 'custom' && (
+              <div className="flex gap-4 mt-4">
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Start Date</label>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="px-4 py-2 border border-gray-300 rounded-lg"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">End Date</label>
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="px-4 py-2 border border-gray-300 rounded-lg"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Today's Quick Stats */}
+          <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl p-6 text-white">
+            <h3 className="text-lg font-medium opacity-90 mb-4">📅 Today's Summary</h3>
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              <div className="bg-white/20 rounded-lg p-4">
+                <p className="text-sm opacity-80">Today's Income</p>
+                <p className="text-2xl font-bold">{formatCurrency(analyticsData.todayIncome)}</p>
+              </div>
+              <div className="bg-white/20 rounded-lg p-4 border-2 border-white/40">
+                <p className="text-sm opacity-80">Today's School Fees</p>
+                <p className="text-2xl font-bold">{formatCurrency(analyticsData.todaySchoolFees || 0)}</p>
+              </div>
+              <div className="bg-white/20 rounded-lg p-4">
+                <p className="text-sm opacity-80">Today's Expenses</p>
+                <p className="text-2xl font-bold">{formatCurrency(analyticsData.todayExpenses)}</p>
+              </div>
+              <div className="bg-white/20 rounded-lg p-4">
+                <p className="text-sm opacity-80">Today's Net</p>
+                <p className="text-2xl font-bold">{formatCurrency(analyticsData.todayIncome - analyticsData.todayExpenses)}</p>
+              </div>
+              <div className="bg-white/20 rounded-lg p-4">
+                <p className="text-sm opacity-80">Transactions</p>
+                <p className="text-2xl font-bold">{analyticsData.todayTransactions}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Period Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+            <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-6 text-white shadow-lg">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-medium opacity-90">Total Income</h3>
+                <TrendingUp className="w-5 h-5" />
+              </div>
+              <p className="text-2xl font-bold">{formatCurrency(analyticsData.totalIncome)}</p>
+              <p className="text-xs opacity-75 mt-2">{analyticsData.incomeCount} transactions • {analyticsData.dateRange.label}</p>
+            </div>
+
+            <div className="bg-gradient-to-br from-teal-500 to-teal-600 rounded-xl p-6 text-white shadow-lg">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-medium opacity-90">School Fees</h3>
+                <Receipt className="w-5 h-5" />
+              </div>
+              <p className="text-2xl font-bold">{formatCurrency(analyticsData.schoolFeesTotal || 0)}</p>
+              <p className="text-xs opacity-75 mt-2">{analyticsData.schoolFeesCount || 0} payments • {analyticsData.dateRange.label}</p>
+            </div>
+
+            <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-6 text-white shadow-lg">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-medium opacity-90">Total Expenses</h3>
+                <DollarSign className="w-5 h-5" />
+              </div>
+              <p className="text-2xl font-bold">{formatCurrency(analyticsData.totalExpenses)}</p>
+              <p className="text-xs opacity-75 mt-2">{analyticsData.expenseCount} transactions • {analyticsData.dateRange.label}</p>
+            </div>
+
+            <div className={`bg-gradient-to-br ${netAmount >= 0 ? 'from-blue-500 to-blue-600' : 'from-orange-500 to-orange-600'} rounded-xl p-6 text-white shadow-lg`}>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-medium opacity-90">Net Amount</h3>
+                <BarChart3 className="w-5 h-5" />
+              </div>
+              <p className="text-2xl font-bold">{formatCurrency(netAmount)}</p>
+              <p className="text-xs opacity-75 mt-2">{netAmount >= 0 ? 'Profit' : 'Loss'} • {analyticsData.dateRange.label}</p>
+            </div>
+
+            <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-6 text-white shadow-lg">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-medium opacity-90">Overall Balance</h3>
+                <Receipt className="w-5 h-5" />
+              </div>
+              <p className="text-2xl font-bold">{formatCurrency(netAmount + oldBalance)}</p>
+              <p className="text-xs opacity-75 mt-2">Including old balance</p>
+            </div>
+          </div>
+
+          {/* Charts Row 1 */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <SimplePieChart 
+              data={analyticsData.incomeByCategory} 
+              title="📊 Income by Category" 
+              colors={['#10B981', '#3B82F6', '#F59E0B', '#8B5CF6', '#EC4899', '#14B8A6']}
+            />
+            <SimplePieChart 
+              data={analyticsData.expensesByCategory} 
+              title="📊 Expenses by Category" 
+              colors={['#EF4444', '#F97316', '#F59E0B', '#84CC16', '#14B8A6', '#6366F1']}
+            />
+            <SimplePieChart 
+              data={analyticsData.paymentMethods} 
+              title="💳 Payment Methods" 
+              colors={['#10B981', '#3B82F6', '#F59E0B', '#8B5CF6']}
+            />
+          </div>
+
+          {/* Daily Trend Chart */}
+          <SimpleBarChart 
+            data={analyticsData.dailyTrend} 
+            title="📈 Daily Income vs Expenses Trend"
+          />
+
+          {/* Top Categories Tables */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Top Income Categories */}
+            <div className="bg-white rounded-xl shadow-md p-6">
+              <h3 className="text-lg font-bold text-gray-800 mb-4">🏆 Top Income Categories</h3>
+              <div className="space-y-3">
+                {analyticsData.incomeByCategory
+                  .sort((a, b) => b.value - a.value)
+                  .slice(0, 5)
+                  .map((cat, index) => (
+                    <div key={index} className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <span className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold ${
+                          index === 0 ? 'bg-yellow-500' : index === 1 ? 'bg-gray-400' : index === 2 ? 'bg-amber-600' : 'bg-gray-300'
+                        }`}>
+                          {index + 1}
+                        </span>
+                        <span className="font-medium text-gray-800">{cat.name}</span>
+                      </div>
+                      <span className="font-bold text-green-600">{formatCurrency(cat.value)}</span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+
+            {/* Top Expense Categories */}
+            <div className="bg-white rounded-xl shadow-md p-6">
+              <h3 className="text-lg font-bold text-gray-800 mb-4">💸 Top Expense Categories</h3>
+              <div className="space-y-3">
+                {analyticsData.expensesByCategory
+                  .sort((a, b) => b.value - a.value)
+                  .slice(0, 5)
+                  .map((cat, index) => (
+                    <div key={index} className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <span className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold ${
+                          index === 0 ? 'bg-red-500' : index === 1 ? 'bg-red-400' : index === 2 ? 'bg-red-300' : 'bg-gray-300'
+                        }`}>
+                          {index + 1}
+                        </span>
+                        <span className="font-medium text-gray-800">{cat.name}</span>
+                      </div>
+                      <span className="font-bold text-red-600">{formatCurrency(cat.value)}</span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    };
     
     const getReportData = () => {
       let filteredIncome = incomeEntries.filter(e => e.category !== 'Old Balance');
       let filteredExpenses = expenseEntries;
       let reportTitle = '';
-      let dateRange = '';
+      let dateRangeStr = '';
       
       if (reportType === 'daily') {
         filteredIncome = filteredIncome.filter(e => e.date === selectedDate);
         filteredExpenses = filteredExpenses.filter(e => e.date === selectedDate);
         reportTitle = 'DAILY FINANCIAL REPORT';
-        dateRange = selectedDate;
+        dateRangeStr = selectedDate;
       } else if (reportType === 'monthly') {
         const month = selectedDate.substring(0, 7);
         filteredIncome = filteredIncome.filter(e => e.date.startsWith(month));
         filteredExpenses = filteredExpenses.filter(e => e.date.startsWith(month));
         reportTitle = 'MONTHLY FINANCIAL REPORT';
-        dateRange = month;
+        dateRangeStr = month;
       } else if (reportType === 'range') {
         filteredIncome = filteredIncome.filter(e => e.date >= startDate && e.date <= endDate);
         filteredExpenses = filteredExpenses.filter(e => e.date >= startDate && e.date <= endDate);
         reportTitle = 'DATE RANGE FINANCIAL REPORT';
-        dateRange = `${startDate} to ${endDate}`;
+        dateRangeStr = `${startDate} to ${endDate}`;
       } else if (reportType === 'category') {
         filteredIncome = filteredIncome.filter(e => e.date >= startDate && e.date <= endDate);
         filteredExpenses = filteredExpenses.filter(e => e.date >= startDate && e.date <= endDate);
         reportTitle = 'CATEGORY-WISE FINANCIAL REPORT';
-        dateRange = `${startDate} to ${endDate}`;
+        dateRangeStr = `${startDate} to ${endDate}`;
       }
       
-      return { filteredIncome, filteredExpenses, reportTitle, dateRange };
+      return { filteredIncome, filteredExpenses, reportTitle, dateRange: dateRangeStr };
     };
 
     const getCategoryBreakdown = () => {
@@ -1686,7 +3024,7 @@ const SchoolFinanceApp = () => {
     
     const generatePDF = () => {
       try {
-        const { filteredIncome, filteredExpenses, reportTitle, dateRange } = getReportData();
+        const { filteredIncome, filteredExpenses, reportTitle, dateRange: dateRangeStr } = getReportData();
         const doc = new jsPDF();
         
         if (typeof doc.autoTable !== 'function') {
@@ -1707,7 +3045,7 @@ const SchoolFinanceApp = () => {
         
         doc.setFontSize(10);
         doc.setFont('helvetica', 'normal');
-        doc.text(`Date: ${dateRange}`, 105, 32, { align: 'center' });
+        doc.text(`Date: ${dateRangeStr}`, 105, 32, { align: 'center' });
         doc.text(`To: Directors and Deputy Headteacher`, 105, 37, { align: 'center' });
         doc.text(`From: ${user.name}, School ${user.role}`, 105, 42, { align: 'center' });
         
@@ -1875,7 +3213,7 @@ const SchoolFinanceApp = () => {
         doc.text(`Prepared by: ${user.name}`, 105, 280, { align: 'center' });
         doc.text(schoolName, 105, 285, { align: 'center' });
         
-        const fileName = `${schoolName.replace(/\s+/g, '_')}_Report_${dateRange.replace(/\s+/g, '_').replace(/\//g, '-')}.pdf`;
+        const fileName = `${schoolName.replace(/\s+/g, '_')}_Report_${dateRangeStr.replace(/\s+/g, '_').replace(/\//g, '-')}.pdf`;
         doc.save(fileName);
         alert('PDF downloaded successfully!');
       } catch (error) {
@@ -1887,7 +3225,7 @@ const SchoolFinanceApp = () => {
     const exportToExcel = async () => {
       try {
         const XLSX = await import('xlsx');
-        const { filteredIncome, filteredExpenses, reportTitle, dateRange } = getReportData();
+        const { filteredIncome, filteredExpenses, reportTitle, dateRange: dateRangeStr } = getReportData();
         
         const wb = XLSX.utils.book_new();
         
@@ -1898,7 +3236,7 @@ const SchoolFinanceApp = () => {
           const categoryData = [
             [schoolName],
             [reportTitle],
-            [`Date: ${dateRange}`],
+            [`Date: ${dateRangeStr}`],
             [],
             [`${categoryReportType === 'income' ? 'INCOME' : 'EXPENSE'} BY CATEGORY`],
             ['Category', 'Count', 'Total Amount (UGX)'],
@@ -1913,7 +3251,7 @@ const SchoolFinanceApp = () => {
           const incomeData = [
             [schoolName],
             [reportTitle],
-            [`Date: ${dateRange}`],
+            [`Date: ${dateRangeStr}`],
             [],
             ['INCOME RECORDS'],
             ['Receipt No', 'Date', 'Category', 'Description', 'Payment Method', 'Amount (UGX)'],
@@ -1928,7 +3266,7 @@ const SchoolFinanceApp = () => {
           const expenseData = [
             [schoolName],
             [reportTitle],
-            [`Date: ${dateRange}`],
+            [`Date: ${dateRangeStr}`],
             [],
             ['EXPENSE RECORDS'],
             ['Date', 'Category', 'Description', 'Amount (UGX)'],
@@ -1948,7 +3286,7 @@ const SchoolFinanceApp = () => {
           const summaryData = [
             [schoolName],
             ['FINANCIAL SUMMARY'],
-            [`Period: ${dateRange}`],
+            [`Period: ${dateRangeStr}`],
             [],
             ['Old Balance', oldBalance],
             ['Total Income Collected', totalIncome],
@@ -1961,7 +3299,7 @@ const SchoolFinanceApp = () => {
           XLSX.utils.book_append_sheet(wb, summarySheet, 'Summary');
         }
         
-        const fileName = `${schoolName.replace(/\s+/g, '_')}_Report_${dateRange.replace(/\s+/g, '_').replace(/\//g, '-')}.xlsx`;
+        const fileName = `${schoolName.replace(/\s+/g, '_')}_Report_${dateRangeStr.replace(/\s+/g, '_').replace(/\//g, '-')}.xlsx`;
         XLSX.writeFile(wb, fileName);
         alert('Excel file downloaded successfully!');
       } catch (error) {
@@ -1975,12 +3313,12 @@ const SchoolFinanceApp = () => {
     };
     
     const shareViaWhatsApp = () => {
-      const { filteredIncome, filteredExpenses, reportTitle, dateRange } = getReportData();
+      const { filteredIncome, filteredExpenses, reportTitle, dateRange: dateRangeStr } = getReportData();
       const totalIncome = calculateTotals(filteredIncome);
       const totalExpense = calculateTotals(filteredExpenses);
       const netAmount = totalIncome - totalExpense;
       
-      let message = `*${schoolName}*\n${reportTitle}\nDate: ${dateRange}\n\n`;
+      let message = `*${schoolName}*\n${reportTitle}\nDate: ${dateRangeStr}\n\n`;
       
       if (reportType === 'category') {
         const breakdown = getCategoryBreakdown();
@@ -2009,13 +3347,13 @@ const SchoolFinanceApp = () => {
     };
     
     const shareViaEmail = () => {
-      const { filteredIncome, filteredExpenses, reportTitle, dateRange } = getReportData();
+      const { filteredIncome, filteredExpenses, reportTitle, dateRange: dateRangeStr } = getReportData();
       const totalIncome = calculateTotals(filteredIncome);
       const totalExpense = calculateTotals(filteredExpenses);
       const netAmount = totalIncome - totalExpense;
       
-      const subject = `${reportTitle} - ${dateRange}`;
-      let body = `${schoolName}\n${reportTitle}\nDate: ${dateRange}\n\n`;
+      const subject = `${reportTitle} - ${dateRangeStr}`;
+      let body = `${schoolName}\n${reportTitle}\nDate: ${dateRangeStr}\n\n`;
       
       if (reportType === 'category') {
         const breakdown = getCategoryBreakdown();
@@ -2049,273 +3387,295 @@ const SchoolFinanceApp = () => {
 
     return (
       <div className="space-y-6">
-        <h2 className="text-3xl font-bold text-gray-800">Reports</h2>
+        <div className="flex justify-between items-center">
+          <h2 className="text-3xl font-bold text-gray-800">Reports & Analytics</h2>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setActiveTab('analytics')}
+              className={`px-4 py-2 rounded-lg font-medium ${activeTab === 'analytics' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
+            >
+              📊 Analytics
+            </button>
+            <button
+              onClick={() => setActiveTab('generate')}
+              className={`px-4 py-2 rounded-lg font-medium ${activeTab === 'generate' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'}`}
+            >
+              📄 Generate Report
+            </button>
+          </div>
+        </div>
 
-        <div className="bg-white rounded-xl shadow-md p-6">
-          <h3 className="text-xl font-bold text-gray-800 mb-4">Generate Report</h3>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Report Type</label>
-              <select
-                value={reportType}
-                onChange={(e) => setReportType(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="daily">Daily Report</option>
-                <option value="monthly">Monthly Report</option>
-                <option value="range">Date Range Report</option>
-                <option value="category">Category Report</option>
-              </select>
+        {activeTab === 'analytics' ? (
+          <AnalyticsDashboard />
+        ) : (
+          <>
+            <div className="bg-white rounded-xl shadow-md p-6">
+              <h3 className="text-xl font-bold text-gray-800 mb-4">Generate Report</h3>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Report Type</label>
+                  <select
+                    value={reportType}
+                    onChange={(e) => setReportType(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="daily">Daily Report</option>
+                    <option value="monthly">Monthly Report</option>
+                    <option value="range">Date Range Report</option>
+                    <option value="category">Category Report</option>
+                  </select>
+                </div>
+                
+                {reportType === 'daily' && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Select Date</label>
+                      <input
+                        type="date"
+                        value={selectedDate}
+                        onChange={(e) => setSelectedDate(e.target.value)}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div></div>
+                    <div></div>
+                  </>
+                )}
+                
+                {(reportType === 'range' || reportType === 'category') && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Start Date</label>
+                      <input
+                        type="date"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">End Date</label>
+                      <input
+                        type="date"
+                        value={endDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    {reportType === 'category' && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Category Type</label>
+                        <select
+                          value={categoryReportType}
+                          onChange={(e) => setCategoryReportType(e.target.value)}
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                        >
+                          <option value="income">Income Categories</option>
+                          <option value="expense">Expense Categories</option>
+                        </select>
+                      </div>
+                    )}
+                  </>
+                )}
+                
+                {reportType === 'monthly' && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Select Month</label>
+                      <input
+                        type="month"
+                        value={selectedDate.substring(0, 7)}
+                        onChange={(e) => setSelectedDate(e.target.value + '-01')}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div></div>
+                    <div></div>
+                  </>
+                )}
+              </div>
+
+              <div className="flex gap-3 flex-wrap">
+                <button
+                  onClick={generatePDF}
+                  className="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-lg font-medium flex items-center gap-2"
+                >
+                  <FileText className="w-5 h-5" />
+                  PDF
+                </button>
+                <button 
+                  onClick={exportToExcel}
+                  className="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg font-medium flex items-center gap-2"
+                >
+                  <Download className="w-5 h-5" />
+                  Excel
+                </button>
+                <button 
+                  onClick={printReport}
+                  className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-lg font-medium flex items-center gap-2"
+                >
+                  <Printer className="w-5 h-5" />
+                  Print
+                </button>
+                <button 
+                  onClick={shareViaWhatsApp}
+                  className="bg-teal-600 hover:bg-teal-700 text-white px-6 py-3 rounded-lg font-medium flex items-center gap-2"
+                >
+                  <Send className="w-5 h-5" />
+                  WhatsApp
+                </button>
+                <button 
+                  onClick={shareViaEmail}
+                  className="bg-orange-600 hover:bg-orange-700 text-white px-6 py-3 rounded-lg font-medium flex items-center gap-2"
+                >
+                  <Mail className="w-5 h-5" />
+                  Email
+                </button>
+              </div>
             </div>
-            
-            {reportType === 'daily' && (
-              <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Select Date</label>
-                  <input
-                    type="date"
-                    value={selectedDate}
-                    onChange={(e) => setSelectedDate(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div></div>
-                <div></div>
-              </>
-            )}
-            
-            {(reportType === 'range' || reportType === 'category') && (
-              <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Start Date</label>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">End Date</label>
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                {reportType === 'category' && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Category Type</label>
-                    <select
-                      value={categoryReportType}
-                      onChange={(e) => setCategoryReportType(e.target.value)}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="income">Income Categories</option>
-                      <option value="expense">Expense Categories</option>
-                    </select>
+
+            <div className="bg-white rounded-xl shadow-md p-8 print:shadow-none" id="reportContent">
+              <div className="text-center mb-6 bg-blue-900 text-white p-6 rounded-lg print:bg-blue-900">
+                {schoolLogo && (
+                  <div className="flex justify-center mb-4">
+                    <img src={schoolLogo} alt="School Logo" className="w-20 h-20 object-contain rounded-full bg-white p-2" />
                   </div>
                 )}
-              </>
-            )}
-            
-            {reportType === 'monthly' && (
-              <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Select Month</label>
-                  <input
-                    type="month"
-                    value={selectedDate.substring(0, 7)}
-                    onChange={(e) => setSelectedDate(e.target.value + '-01')}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div></div>
-                <div></div>
-              </>
-            )}
-          </div>
-
-          <div className="flex gap-3 flex-wrap">
-            <button
-              onClick={generatePDF}
-              className="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-lg font-medium flex items-center gap-2"
-            >
-              <FileText className="w-5 h-5" />
-              PDF
-            </button>
-            <button 
-              onClick={exportToExcel}
-              className="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg font-medium flex items-center gap-2"
-            >
-              <Download className="w-5 h-5" />
-              Excel
-            </button>
-            <button 
-              onClick={printReport}
-              className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-lg font-medium flex items-center gap-2"
-            >
-              <Printer className="w-5 h-5" />
-              Print
-            </button>
-            <button 
-              onClick={shareViaWhatsApp}
-              className="bg-teal-600 hover:bg-teal-700 text-white px-6 py-3 rounded-lg font-medium flex items-center gap-2"
-            >
-              <Send className="w-5 h-5" />
-              WhatsApp
-            </button>
-            <button 
-              onClick={shareViaEmail}
-              className="bg-orange-600 hover:bg-orange-700 text-white px-6 py-3 rounded-lg font-medium flex items-center gap-2"
-            >
-              <Mail className="w-5 h-5" />
-              Email
-            </button>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl shadow-md p-8 print:shadow-none" id="reportContent">
-          <div className="text-center mb-6 bg-blue-900 text-white p-6 rounded-lg print:bg-blue-900">
-            {schoolLogo && (
-              <div className="flex justify-center mb-4">
-                <img src={schoolLogo} alt="School Logo" className="w-20 h-20 object-contain rounded-full bg-white p-2" />
-              </div>
-            )}
-            <h1 className="text-2xl font-bold">{schoolName}</h1>
-            <h2 className="text-xl font-bold mt-2">
-              {reportType === 'daily' ? 'DAILY' : reportType === 'monthly' ? 'MONTHLY' : reportType === 'category' ? 'CATEGORY-WISE' : 'DATE RANGE'} FINANCIAL REPORT
-            </h2>
-            <p className="mt-2 text-sm">
-              Date: {reportType === 'range' || reportType === 'category' ? `${startDate} to ${endDate}` : reportType === 'monthly' ? selectedDate.substring(0, 7) : selectedDate}
-            </p>
-            <p className="text-sm">To: Directors and Deputy Headteacher</p>
-            <p className="text-sm">From: {user.name}, School {user.role}</p>
-          </div>
-
-          {reportType === 'category' ? (
-            <div className="space-y-6">
-              <div>
-                <h3 className="text-lg font-bold text-white bg-gradient-to-r from-blue-600 to-blue-800 p-3 rounded-t-lg">
-                  {categoryReportType === 'income' ? 'Income' : 'Expense'} by Category
-                </h3>
-                <table className="w-full border-collapse border border-gray-300">
-                  <thead>
-                    <tr className="bg-blue-50">
-                      <th className="border border-gray-300 text-left py-2 px-4 text-sm font-semibold text-gray-700">Category</th>
-                      <th className="border border-gray-300 text-center py-2 px-4 text-sm font-semibold text-gray-700">Count</th>
-                      <th className="border border-gray-300 text-right py-2 px-4 text-sm font-semibold text-gray-700">Total Amount (UGX)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.keys(categoryBreakdown).sort().map(category => (
-                      <tr key={category}>
-                        <td className="border border-gray-300 py-2 px-4 text-sm">{category}</td>
-                        <td className="border border-gray-300 py-2 px-4 text-sm text-center">{categoryBreakdown[category].count}</td>
-                        <td className="border border-gray-300 py-2 px-4 text-sm text-right font-semibold">
-                          {formatCurrency(categoryBreakdown[category].total)}
-                        </td>
-                      </tr>
-                    ))}
-                    <tr className={`${categoryReportType === 'income' ? 'bg-green-100' : 'bg-red-100'} font-bold`}>
-                      <td className="border border-gray-300 py-2 px-4 text-sm">TOTAL</td>
-                      <td className="border border-gray-300 py-2 px-4 text-sm text-center">
-                        {Object.values(categoryBreakdown).reduce((sum, item) => sum + item.count, 0)}
-                      </td>
-                      <td className={`border border-gray-300 py-2 px-4 text-sm text-right ${categoryReportType === 'income' ? 'text-green-700' : 'text-red-700'}`}>
-                        {formatCurrency(Object.values(categoryBreakdown).reduce((sum, item) => sum + item.total, 0))}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              <div>
-                <h3 className="text-lg font-bold text-white bg-blue-600 p-3 rounded-t-lg">1. Income Collected</h3>
-                <table className="w-full border-collapse border border-gray-300">
-                  <thead>
-                    <tr className="bg-blue-50">
-                      <th className="border border-gray-300 text-left py-2 px-4 text-sm font-semibold text-gray-700">Item</th>
-                      <th className="border border-gray-300 text-right py-2 px-4 text-sm font-semibold text-gray-700">Amount (UGX)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td className="border border-gray-300 py-2 px-4 text-sm">Old Balance</td>
-                      <td className="border border-gray-300 py-2 px-4 text-sm text-right">{formatCurrency(oldBalance)}</td>
-                    </tr>
-                    {filteredIncome.map((entry, idx) => (
-                      <tr key={idx}>
-                        <td className="border border-gray-300 py-2 px-4 text-sm">{entry.description}</td>
-                        <td className="border border-gray-300 py-2 px-4 text-sm text-right">{formatCurrency(entry.amount)}</td>
-                      </tr>
-                    ))}
-                    <tr className="bg-green-100 font-bold">
-                      <td className="border border-gray-300 py-2 px-4 text-sm">TOTAL COLLECTIONS</td>
-                      <td className="border border-gray-300 py-2 px-4 text-sm text-right text-green-700">{formatCurrency(displayTotalIncome)}</td>
-                    </tr>
-                  </tbody>
-                </table>
+                <h1 className="text-2xl font-bold">{schoolName}</h1>
+                <h2 className="text-xl font-bold mt-2">
+                  {reportType === 'daily' ? 'DAILY' : reportType === 'monthly' ? 'MONTHLY' : reportType === 'category' ? 'CATEGORY-WISE' : 'DATE RANGE'} FINANCIAL REPORT
+                </h2>
+                <p className="mt-2 text-sm">
+                  Date: {reportType === 'range' || reportType === 'category' ? `${startDate} to ${endDate}` : reportType === 'monthly' ? selectedDate.substring(0, 7) : selectedDate}
+                </p>
+                <p className="text-sm">To: Directors and Deputy Headteacher</p>
+                <p className="text-sm">From: {user.name}, School {user.role}</p>
               </div>
 
-              <div>
-                <h3 className="text-lg font-bold text-white bg-red-600 p-3 rounded-t-lg">2. Expenses Incurred</h3>
-                <table className="w-full border-collapse border border-gray-300">
-                  <thead>
-                    <tr className="bg-red-50">
-                      <th className="border border-gray-300 text-left py-2 px-4 text-sm font-semibold text-gray-700">Expense Description</th>
-                      <th className="border border-gray-300 text-right py-2 px-4 text-sm font-semibold text-gray-700">Amount (UGX)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredExpenses.length > 0 ? (
-                      filteredExpenses.map((entry, idx) => (
-                        <tr key={idx}>
-                          <td className="border border-gray-300 py-2 px-4 text-sm">{entry.description}</td>
-                          <td className="border border-gray-300 py-2 px-4 text-sm text-right">{formatCurrency(entry.amount)}</td>
+              {reportType === 'category' ? (
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="text-lg font-bold text-white bg-gradient-to-r from-blue-600 to-blue-800 p-3 rounded-t-lg">
+                      {categoryReportType === 'income' ? 'Income' : 'Expense'} by Category
+                    </h3>
+                    <table className="w-full border-collapse border border-gray-300">
+                      <thead>
+                        <tr className="bg-blue-50">
+                          <th className="border border-gray-300 text-left py-2 px-4 text-sm font-semibold text-gray-700">Category</th>
+                          <th className="border border-gray-300 text-center py-2 px-4 text-sm font-semibold text-gray-700">Count</th>
+                          <th className="border border-gray-300 text-right py-2 px-4 text-sm font-semibold text-gray-700">Total Amount (UGX)</th>
                         </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td className="border border-gray-300 py-2 px-4 text-sm" colSpan="2">No expenses recorded</td>
-                      </tr>
-                    )}
-                    <tr className="bg-red-100 font-bold">
-                      <td className="border border-gray-300 py-2 px-4 text-sm">TOTAL EXPENSES</td>
-                      <td className="border border-gray-300 py-2 px-4 text-sm text-right text-red-700">{formatCurrency(displayTotalExpense)}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="bg-blue-50 p-6 rounded-lg border-2 border-blue-300">
-                <h3 className="text-lg font-bold text-blue-900 mb-4">3. Summary</h3>
-                <div className="space-y-3 text-sm">
-                  <div className="flex justify-between pb-2 border-b border-blue-200">
-                    <span className="font-medium">Total Collected:</span>
-                    <span className="font-semibold text-green-700">{formatCurrency(displayTotalIncome)}</span>
-                  </div>
-                  <div className="flex justify-between pb-2 border-b border-blue-200">
-                    <span className="font-medium">Less Expenses:</span>
-                    <span className="font-semibold text-red-700">{formatCurrency(displayTotalExpense)}</span>
-                  </div>
-                  <div className="flex justify-between text-lg font-bold text-blue-900 pt-3 border-t-2 border-blue-400">
-                    <span>Net Amount:</span>
-                    <span>{formatCurrency(displayTotalIncome - displayTotalExpense)}</span>
+                      </thead>
+                      <tbody>
+                        {Object.keys(categoryBreakdown).sort().map(category => (
+                          <tr key={category}>
+                            <td className="border border-gray-300 py-2 px-4 text-sm">{category}</td>
+                            <td className="border border-gray-300 py-2 px-4 text-sm text-center">{categoryBreakdown[category].count}</td>
+                            <td className="border border-gray-300 py-2 px-4 text-sm text-right font-semibold">
+                              {formatCurrency(categoryBreakdown[category].total)}
+                            </td>
+                          </tr>
+                        ))}
+                        <tr className={`${categoryReportType === 'income' ? 'bg-green-100' : 'bg-red-100'} font-bold`}>
+                          <td className="border border-gray-300 py-2 px-4 text-sm">TOTAL</td>
+                          <td className="border border-gray-300 py-2 px-4 text-sm text-center">
+                            {Object.values(categoryBreakdown).reduce((sum, item) => sum + item.count, 0)}
+                          </td>
+                          <td className={`border border-gray-300 py-2 px-4 text-sm text-right ${categoryReportType === 'income' ? 'text-green-700' : 'text-red-700'}`}>
+                            {formatCurrency(Object.values(categoryBreakdown).reduce((sum, item) => sum + item.total, 0))}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
                 </div>
+              ) : (
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="text-lg font-bold text-white bg-blue-600 p-3 rounded-t-lg">1. Income Collected</h3>
+                    <table className="w-full border-collapse border border-gray-300">
+                      <thead>
+                        <tr className="bg-blue-50">
+                          <th className="border border-gray-300 text-left py-2 px-4 text-sm font-semibold text-gray-700">Item</th>
+                          <th className="border border-gray-300 text-right py-2 px-4 text-sm font-semibold text-gray-700">Amount (UGX)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td className="border border-gray-300 py-2 px-4 text-sm">Old Balance</td>
+                          <td className="border border-gray-300 py-2 px-4 text-sm text-right">{formatCurrency(oldBalance)}</td>
+                        </tr>
+                        {filteredIncome.map((entry, idx) => (
+                          <tr key={idx}>
+                            <td className="border border-gray-300 py-2 px-4 text-sm">{entry.description}</td>
+                            <td className="border border-gray-300 py-2 px-4 text-sm text-right">{formatCurrency(entry.amount)}</td>
+                          </tr>
+                        ))}
+                        <tr className="bg-green-100 font-bold">
+                          <td className="border border-gray-300 py-2 px-4 text-sm">TOTAL COLLECTIONS</td>
+                          <td className="border border-gray-300 py-2 px-4 text-sm text-right text-green-700">{formatCurrency(displayTotalIncome)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div>
+                    <h3 className="text-lg font-bold text-white bg-red-600 p-3 rounded-t-lg">2. Expenses Incurred</h3>
+                    <table className="w-full border-collapse border border-gray-300">
+                      <thead>
+                        <tr className="bg-red-50">
+                          <th className="border border-gray-300 text-left py-2 px-4 text-sm font-semibold text-gray-700">Expense Description</th>
+                          <th className="border border-gray-300 text-right py-2 px-4 text-sm font-semibold text-gray-700">Amount (UGX)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredExpenses.length > 0 ? (
+                          filteredExpenses.map((entry, idx) => (
+                            <tr key={idx}>
+                              <td className="border border-gray-300 py-2 px-4 text-sm">{entry.description}</td>
+                              <td className="border border-gray-300 py-2 px-4 text-sm text-right">{formatCurrency(entry.amount)}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td className="border border-gray-300 py-2 px-4 text-sm" colSpan="2">No expenses recorded</td>
+                          </tr>
+                        )}
+                        <tr className="bg-red-100 font-bold">
+                          <td className="border border-gray-300 py-2 px-4 text-sm">TOTAL EXPENSES</td>
+                          <td className="border border-gray-300 py-2 px-4 text-sm text-right text-red-700">{formatCurrency(displayTotalExpense)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="bg-blue-50 p-6 rounded-lg border-2 border-blue-300">
+                    <h3 className="text-lg font-bold text-blue-900 mb-4">3. Summary</h3>
+                    <div className="space-y-3 text-sm">
+                      <div className="flex justify-between pb-2 border-b border-blue-200">
+                        <span className="font-medium">Total Collected:</span>
+                        <span className="font-semibold text-green-700">{formatCurrency(displayTotalIncome)}</span>
+                      </div>
+                      <div className="flex justify-between pb-2 border-b border-blue-200">
+                        <span className="font-medium">Less Expenses:</span>
+                        <span className="font-semibold text-red-700">{formatCurrency(displayTotalExpense)}</span>
+                      </div>
+                      <div className="flex justify-between text-lg font-bold text-blue-900 pt-3 border-t-2 border-blue-400">
+                        <span>Net Amount:</span>
+                        <span>{formatCurrency(displayTotalIncome - displayTotalExpense)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-8 pt-4 border-t-2 border-gray-300 text-center text-sm text-gray-600">
+                <p className="font-medium">Prepared by: {user.name}</p>
+                <p className="font-bold text-gray-800 mt-1">{schoolName}</p>
               </div>
             </div>
-          )}
-
-          <div className="mt-8 pt-4 border-t-2 border-gray-300 text-center text-sm text-gray-600">
-            <p className="font-medium">Prepared by: {user.name}</p>
-            <p className="font-bold text-gray-800 mt-1">{schoolName}</p>
-          </div>
-        </div>
+          </>
+        )}
       </div>
     );
   };
@@ -2373,24 +3733,58 @@ const SchoolFinanceApp = () => {
       const res = await api.get(`/students/search?q=${encodeURIComponent(query)}`);
       if (res.success) {
         const data = Array.isArray(res.data) ? res.data : (res.data?.students || []);
+        console.log('Search results:', data); // Debug - check what fields are available
         setSearchResults(data);
       }
     };
 
     const selectStudent = async (student) => {
       setLoadingStudent(true);
-      setSelectedStudent(student);
       setSearchResults([]);
       setSearchTerm(`${student.firstName} ${student.lastName}`);
       
-      // Use balance from search if available, otherwise fetch
-      if (student.balance) {
-        setStudentBalance(student.balance);
-      } else {
-        const balanceRes = await api.get(`/students/${student.id}/balance`);
-        if (balanceRes.success) {
-          setStudentBalance(balanceRes.data);
+      // Fetch full student data to get class info
+      const studentRes = await api.get(`/students/${student.id}`);
+      console.log('Full student data from API:', studentRes); // Debug - see what API returns
+      
+       if (studentRes.success) {
+        const fullStudent = studentRes.data;
+        console.log('Full student object:', fullStudent);
+        console.log('All student fields:', Object.keys(fullStudent));
+        
+        // Debug class fields specifically
+        console.log('CLASS DEBUG:', {
+          'fullStudent.class': fullStudent.class,
+          'fullStudent.className': fullStudent.className,
+          'fullStudent.classId': fullStudent.classId
+        });
+        
+        // Get class name - check all possible locations
+        let finalClassName = '';
+        if (fullStudent.class && typeof fullStudent.class === 'object') {
+          finalClassName = fullStudent.class.name || '';
+        } else if (fullStudent.className) {
+          finalClassName = fullStudent.className;
         }
+        
+        console.log('Final className:', finalClassName);
+        
+        const mergedStudent = {
+          ...student,
+          ...fullStudent,
+          fullName: fullStudent.fullName || student.fullName || `${student.firstName} ${student.lastName}`,
+          className: finalClassName
+        };
+        console.log('Merged student with className:', mergedStudent.className);
+        setSelectedStudent(mergedStudent);
+      } else {
+        setSelectedStudent(student);
+      }
+      
+      // Fetch balance
+      const balanceRes = await api.get(`/students/${student.id}/balance`);
+      if (balanceRes.success) {
+        setStudentBalance(balanceRes.data);
       }
       
       // Load payment history
@@ -2428,25 +3822,33 @@ const SchoolFinanceApp = () => {
         const previousBalance = studentBalance?.balance || 0;
         const newBalance = previousBalance - parseFloat(paymentForm.amount);
         
-        // Print receipt with balance
-        const receiptData = {
+         // Create full entry with student info
+        const studentFullName = selectedStudent.fullName || `${selectedStudent.firstName || ''} ${selectedStudent.lastName || ''}`.trim() || 'Unknown';
+        const studentClassName = selectedStudent.className || '';
+        
+        console.log('Recording payment:', { studentFullName, studentClassName }); // Debug - see all fields
+        
+        const newEntry = {
           id: res.data.id,
           receiptNo: res.data.receiptNumber,
           date: new Date().toISOString().split('T')[0],
-          studentName: `${selectedStudent.firstName} ${selectedStudent.lastName}`,
+          studentName: studentFullName,
+          studentClass: studentClassName,
+          studentId: selectedStudent.id,
           category: 'School Fees',
           description: paymentForm.description || 'School fees payment',
           amount: parseFloat(paymentForm.amount),
           paymentMethod: paymentForm.paymentMethod.replace('_', ' ').toUpperCase(),
           balance: newBalance > 0 ? newBalance : 0
         };
-        printReceipt(receiptData);
+        
+        // Add to incomeEntries so it shows in Dashboard immediately
+        setIncomeEntries(prev => [newEntry, ...prev]);
+        
+        // Print receipt
+        printReceipt(newEntry);
         
         // Refresh data with updated balance
-        const updatedStudent = {
-          ...selectedStudent,
-          balance: res.data.balance
-        };
         setStudentBalance(res.data.balance);
         loadRecentPayments();
         
@@ -2457,7 +3859,7 @@ const SchoolFinanceApp = () => {
           description: ''
         }));
         
-        logAction('ADD', 'FEE_PAYMENT', `Recorded ${formatCurrency(receiptData.amount)} for ${receiptData.studentName}`);
+        logAction('ADD', 'FEE_PAYMENT', `Recorded ${formatCurrency(newEntry.amount)} for ${newEntry.studentName}`);
       } else {
         alert(res.message || 'Error recording payment');
       }
@@ -4150,6 +5552,7 @@ const SchoolFinanceApp = () => {
         { id: 'expenses', label: 'Expenses', icon: <DollarSign className="w-5 h-5" /> },
         { id: 'students', label: 'Students', icon: <User className="w-5 h-5" /> },
         { id: 'reports', label: 'Reports', icon: <FileText className="w-5 h-5" /> },
+        { id: 'sms', label: 'SMS Center', icon: <MessageSquare className="w-5 h-5" /> },
         { id: 'settings', label: 'Settings', icon: <SettingsIcon className="w-5 h-5" /> }
       ].map(item => (        <button
           key={item.id}
@@ -4175,6 +5578,25 @@ const SchoolFinanceApp = () => {
   {currentView === 'expenses' && <ExpenseManagement />}
   {currentView === 'students' && <StudentsManagement />}
   {currentView === 'reports' && <Reports />}
+  {currentView === 'sms' && <SMSCenter 
+  smsStats={smsStats} smsHistory={smsHistory} defaulters={defaulters}
+  selectedDefaulters={selectedDefaulters} defaultersLoading={defaultersLoading}
+  smsMessage={smsMessage} setSmsMessage={setSmsMessage}
+  smsPhone={smsPhone} setSmsPhone={setSmsPhone}
+  smsTemplate={smsTemplate} setSmsTemplate={setSmsTemplate}
+  smsStudentSearch={smsStudentSearch} setSmsStudentSearch={setSmsStudentSearch}
+  smsSearchResults={smsSearchResults} selectedSmsStudent={selectedSmsStudent}
+  setSelectedSmsStudent={setSelectedSmsStudent} setSmsSearchResults={setSmsSearchResults}
+  minBalance={minBalance} setMinBalance={setMinBalance}
+  smsFilterClass={smsFilterClass} setSmsFilterClass={setSmsFilterClass}
+  classes={classes} smsLoading={smsLoading}
+  loadSmsStats={loadSmsStats} loadSmsHistory={loadSmsHistory}
+  loadDefaulters={loadDefaulters} loadClasses={loadClasses}
+  searchSmsStudents={searchSmsStudents} selectSmsStudent={selectSmsStudent}
+  applySmsTemplate={applySmsTemplate} sendSms={sendSms} sendBulkSms={sendBulkSms}
+  toggleDefaulterSelection={toggleDefaulterSelection} selectAllDefaulters={selectAllDefaulters}
+  formatCurrency={formatCurrency} smsTemplates={smsTemplates}
+/>}
   {currentView === 'settings' && <Settings />}
 </main>
     </div>
