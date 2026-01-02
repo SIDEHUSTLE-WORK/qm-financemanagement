@@ -94,21 +94,41 @@ const search = async (req, res) => {
         ]
       },
       include: {
-        class: { select: { name: true } }
+        class: { select: { id: true, name: true } },
+        balances: {
+          orderBy: { createdAt: 'desc' },
+          take: 1
+        }
       },
       take: 10,
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }]
     });
 
-    const transformed = students.map(s => ({
-      id: s.id,
-      studentNumber: s.studentNumber,
-      firstName: s.firstName,
-      lastName: s.lastName,
-      fullName: `${s.firstName} ${s.lastName}`,
-      className: s.class?.name,
-      classId: s.classId
-    }));
+    const transformed = students.map(s => {
+      const balance = s.balances?.[0];
+      const totalFees = parseFloat(balance?.totalFees || 0);
+      const amountPaid = parseFloat(balance?.amountPaid || 0);
+      const previousBalance = parseFloat(balance?.previousBalance || 0);
+      const currentBalance = totalFees + previousBalance - amountPaid;
+
+      return {
+        id: s.id,
+        studentNumber: s.studentNumber,
+        firstName: s.firstName,
+        lastName: s.lastName,
+        fullName: `${s.firstName} ${s.lastName}`,
+        class: s.class,
+        className: s.class?.name || 'N/A',
+        classId: s.classId,
+        guardianPhone: s.parentPhone,
+        balance: {
+          totalFees,
+          amountPaid,
+          previousBalance,
+          balance: currentBalance
+        }
+      };
+    });
 
     res.json({ success: true, data: transformed });
   } catch (error) {

@@ -73,10 +73,16 @@ const studentValidation = [
     .notEmpty().withMessage('Last name is required')
     .isLength({ max: 100 }).withMessage('Last name too long'),
   body('parentPhone')
-    .optional()
-    .matches(/^[\d\s+()-]+$/).withMessage('Invalid phone number format'),
+    .optional({ nullable: true, checkFalsy: true })
+    .matches(/^[\d\s+()-]*$/).withMessage('Invalid phone number format'),
+  body('guardianPhone')
+    .optional({ nullable: true, checkFalsy: true })
+    .matches(/^[\d\s+()-]*$/).withMessage('Invalid phone number format'),
   body('parentEmail')
-    .optional()
+    .optional({ nullable: true, checkFalsy: true })
+    .isEmail().withMessage('Invalid email format'),
+  body('guardianEmail')
+    .optional({ nullable: true, checkFalsy: true })
     .isEmail().withMessage('Invalid email format'),
   validate
 ];
