@@ -2383,10 +2383,14 @@ const SchoolFinanceApp = () => {
       setSearchResults([]);
       setSearchTerm(`${student.firstName} ${student.lastName}`);
       
-      // Load student balance
-      const balanceRes = await api.get(`/students/${student.id}/balance`);
-      if (balanceRes.success) {
-        setStudentBalance(balanceRes.data);
+      // Use balance from search if available, otherwise fetch
+      if (student.balance) {
+        setStudentBalance(student.balance);
+      } else {
+        const balanceRes = await api.get(`/students/${student.id}/balance`);
+        if (balanceRes.success) {
+          setStudentBalance(balanceRes.data);
+        }
       }
       
       // Load payment history
@@ -2438,8 +2442,12 @@ const SchoolFinanceApp = () => {
         };
         printReceipt(receiptData);
         
-        // Refresh data
-        selectStudent(selectedStudent);
+        // Refresh data with updated balance
+        const updatedStudent = {
+          ...selectedStudent,
+          balance: res.data.balance
+        };
+        setStudentBalance(res.data.balance);
         loadRecentPayments();
         
         // Reset form
@@ -2509,7 +2517,7 @@ const SchoolFinanceApp = () => {
                       <div className="flex justify-between items-center">
                         <div>
                           <p className="font-bold text-gray-800">{student.firstName} {student.lastName}</p>
-                          <p className="text-sm text-gray-500">{student.studentNumber} • {student.class?.name || 'N/A'}</p>
+                          <p className="text-sm text-gray-500">{student.studentNumber} • {student.className || student.class?.name || 'N/A'}</p>
                         </div>
                         <span className="text-blue-600 font-medium">Select</span>
                       </div>
@@ -2532,14 +2540,17 @@ const SchoolFinanceApp = () => {
                     </div>
                     {loadingStudent ? (
                       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                    ) : studentBalance && (
+                    ) : (
                       <div className="text-right">
                         <p className="text-sm text-gray-500">Current Balance</p>
-                        <p className={`text-2xl font-bold ${(studentBalance.balance || 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                          {formatCurrency(Math.abs(studentBalance.balance || 0))}
+                        <p className={`text-2xl font-bold ${(studentBalance?.balance || 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                          {formatCurrency(studentBalance?.balance || 0)}
                         </p>
                         <p className="text-xs text-gray-500">
-                          {(studentBalance.balance || 0) > 0 ? 'Outstanding' : 'Overpaid'}
+                          {(studentBalance?.balance || 0) > 0 ? 'Outstanding' : 'Cleared'}
+                        </p>
+                        <p className="text-xs text-blue-600 mt-1">
+                          Fees: {formatCurrency(studentBalance?.totalFees || 0)} | Paid: {formatCurrency(studentBalance?.amountPaid || 0)}
                         </p>
                       </div>
                     )}
@@ -3073,7 +3084,7 @@ const SchoolFinanceApp = () => {
                   placeholder="Enter email"
                 />
               </div>
-              <div className="md:col-span-2">
+              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Address</label>
                 <input
                   type="text"
@@ -3081,6 +3092,16 @@ const SchoolFinanceApp = () => {
                   onChange={(e) => setNewStudent({...newStudent, address: e.target.value})}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
                   placeholder="Enter address"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Total School Fees (UGX) *</label>
+                <input
+                  type="number"
+                  value={newStudent.totalFees}
+                  onChange={(e) => setNewStudent({...newStudent, totalFees: e.target.value})}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none font-bold text-green-700"
+                  placeholder="e.g. 500000"
                 />
               </div>
             </div>
@@ -3350,7 +3371,7 @@ const SchoolFinanceApp = () => {
             </div>
           </div>
         )}
-        
+
         {/* Edit Student Modal */}
         {editingStudent && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
