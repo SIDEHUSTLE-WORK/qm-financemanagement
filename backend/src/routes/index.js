@@ -7,6 +7,7 @@ const incomeController = require('../controllers/incomeController');
 const expenseController = require('../controllers/expenseController');
 const studentController = require('../controllers/studentController');
 const reportController = require('../controllers/reportController');
+const smsController = require('../controllers/smsController');
 const { getAuditLogs } = require('../middleware/audit');
 
 // Import middleware
@@ -93,6 +94,13 @@ router.get('/fees/payments/recent', authenticate, async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to fetch recent payments' });
   }
 });
+
+// ==================== SMS ROUTES ====================
+router.post('/sms/send', authenticate, checkPermission('income', 'create'), smsController.sendSms);
+router.post('/sms/send-bulk', authenticate, checkPermission('income', 'create'), smsController.sendBulkSms);
+router.get('/sms/history', authenticate, smsController.getHistory);
+router.get('/sms/stats', authenticate, smsController.getStats);
+router.get('/sms/defaulters', authenticate, smsController.getDefaulters);
 
 // ==================== REPORT ROUTES ====================
 router.get('/reports', authenticate, checkPermission('reports', 'read'), reportController.getAll);

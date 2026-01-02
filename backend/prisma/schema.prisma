@@ -40,6 +40,7 @@ model School {
   reports           Report[]
   auditLogs         AuditLog[]
   settings_kv       Setting[]
+  smsLogs           SmsLog[]
 
   @@map("schools")
 }
@@ -411,4 +412,24 @@ model Setting {
 
   @@unique([schoolId, key])
   @@map("settings")
+}
+
+// ==================== SMS ====================
+
+model SmsLog {
+  id          String   @id @default(uuid())
+  phone       String
+  message     String   @db.Text
+  studentId   String?  @map("student_id")
+  studentName String?  @map("student_name")
+  status      String   // 'sent', 'failed'
+  cost        Int      @default(0)
+  response    String?  @db.Text
+  sentBy      String   @map("sent_by")
+  schoolId    String   @map("school_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  school      School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@map("sms_logs")
 }
