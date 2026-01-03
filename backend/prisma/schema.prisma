@@ -42,6 +42,9 @@ model School {
   settings_kv       Setting[]
   smsLogs           SmsLog[]
   budgets           Budget[]
+  roles             Role[]
+  paymentPlans      PaymentPlan[]
+  installments      Installment[]
 
   @@map("schools")
 }
@@ -54,7 +57,8 @@ model User {
   fullName           String    @map("full_name")
   email              String?
   phone              String?
-  role               UserRole
+  userRole           UserRole  @default(viewer) @map("user_role")
+  roleId             String?   @map("role_id")
   permissions        Json      @default("{}")
   isActive           Boolean   @default(true) @map("is_active")
   mustChangePassword Boolean   @default(false) @map("must_change_password")
@@ -65,16 +69,17 @@ model User {
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
   // Relations
-  school          School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  refreshTokens   RefreshToken[]
-  incomeReceived  Income[]       @relation("ReceivedBy")
-  incomeVoided    Income[]       @relation("VoidedBy")
-  expensesPaid    Expense[]      @relation("PaidBy")
-  expensesApproved Expense[]     @relation("ApprovedBy")
-  expensesVoided  Expense[]      @relation("ExpenseVoidedBy")
+  school           School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  role             Role?          @relation(fields: [roleId], references: [id])
+  refreshTokens    RefreshToken[]
+  incomeReceived   Income[]       @relation("ReceivedBy")
+  incomeVoided     Income[]       @relation("VoidedBy")
+  expensesPaid     Expense[]      @relation("PaidBy")
+  expensesApproved Expense[]      @relation("ApprovedBy")
+  expensesVoided   Expense[]      @relation("ExpenseVoidedBy")
   reportsGenerated Report[]
-  auditLogs       AuditLog[]
-  classTeacher    Class[]
+  auditLogs        AuditLog[]
+  classTeacher     Class[]
 
   @@unique([schoolId, username])
   @@map("users")
@@ -87,6 +92,23 @@ enum UserRole {
   accountant
   teacher
   viewer
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  permissions Json     @default("{}")
+  schoolId    String   @map("school_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  users  User[]
+
+  @@unique([schoolId, name])
+  @@index([schoolId])
+  @@map("roles")
 }
 
 model RefreshToken {
@@ -131,11 +153,11 @@ model AcademicTerm {
   isCurrent      Boolean  @default(false) @map("is_current")
   createdAt      DateTime @default(now()) @map("created_at")
 
-  school         School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  academicYear   AcademicYear     @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
-  feeStructures  FeeStructure[]
+  school          School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  academicYear    AcademicYear     @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  feeStructures   FeeStructure[]
   studentBalances StudentBalance[]
-  income         Income[]
+  income          Income[]
 
   @@unique([academicYearId, termNumber])
   @@map("academic_terms")
@@ -187,10 +209,11 @@ model Student {
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
 
-  school   School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  class    Class?           @relation(fields: [classId], references: [id])
-  balances StudentBalance[]
-  income   Income[]
+  school       School              @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  class        Class?              @relation(fields: [classId], references: [id])
+  balances     StudentBalance[]
+  income       Income[]
+  paymentPlans StudentPaymentPlan[]
 
   @@unique([schoolId, studentNumber])
   @@map("students")
@@ -352,22 +375,84 @@ model Expense {
   @@map("expenses")
 }
 
+// ==================== PAYMENT PLANS ====================
+
+model PaymentPlan {
+  id           String   @id @default(uuid())
+  name         String
+  totalAmount  Decimal  @map("total_amount") @db.Decimal(12, 2)
+  installments Int
+  termId       String?  @map("term_id")
+  isActive     Boolean  @default(true) @map("is_active")
+  schoolId     String   @map("school_id")
+  createdBy    String   @map("created_by")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  school       School              @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  studentPlans StudentPaymentPlan[]
+
+  @@index([schoolId])
+  @@map("payment_plans")
+}
+
+model StudentPaymentPlan {
+  id            String   @id @default(uuid())
+  studentId     String   @map("student_id")
+  paymentPlanId String   @map("payment_plan_id")
+  totalAmount   Decimal  @map("total_amount") @db.Decimal(12, 2)
+  status        String   @default("active") // active, completed, cancelled
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  student      Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  paymentPlan  PaymentPlan   @relation(fields: [paymentPlanId], references: [id], onDelete: Cascade)
+  installments Installment[]
+
+  @@unique([studentId, paymentPlanId])
+  @@map("student_payment_plans")
+}
+
+model Installment {
+  id                   String    @id @default(uuid())
+  studentPaymentPlanId String    @map("student_payment_plan_id")
+  installmentNumber    Int       @map("installment_number")
+  amount               Decimal   @db.Decimal(12, 2)
+  dueDate              DateTime  @map("due_date") @db.Date
+  paidAmount           Decimal   @default(0) @map("paid_amount") @db.Decimal(12, 2)
+  paidDate             DateTime? @map("paid_date")
+  status               String    @default("pending") // pending, partial, paid, overdue
+  reminderSent         Boolean   @default(false) @map("reminder_sent")
+  reminderSentAt       DateTime? @map("reminder_sent_at")
+  schoolId             String    @map("school_id")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  studentPaymentPlan StudentPaymentPlan @relation(fields: [studentPaymentPlanId], references: [id], onDelete: Cascade)
+  school             School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId])
+  @@index([status])
+  @@index([dueDate])
+  @@map("installments")
+}
+
 // ==================== REPORTS ====================
 
 model Report {
-  id           String   @id @default(uuid())
-  schoolId     String   @map("school_id")
-  reportType   String   @map("report_type")
-  title        String
-  dateFrom     DateTime? @map("date_from") @db.Date
-  dateTo       DateTime? @map("date_to") @db.Date
-  generatedById String?  @map("generated_by")
-  parameters   Json?
-  summary      Json?
-  filePath     String?  @map("file_path")
-  fileSize     Int?     @map("file_size")
-  isArchived   Boolean  @default(false) @map("is_archived")
-  createdAt    DateTime @default(now()) @map("created_at")
+  id            String    @id @default(uuid())
+  schoolId      String    @map("school_id")
+  reportType    String    @map("report_type")
+  title         String
+  dateFrom      DateTime? @map("date_from") @db.Date
+  dateTo        DateTime? @map("date_to") @db.Date
+  generatedById String?   @map("generated_by")
+  parameters    Json?
+  summary       Json?
+  filePath      String?   @map("file_path")
+  fileSize      Int?      @map("file_size")
+  isArchived    Boolean   @default(false) @map("is_archived")
+  createdAt     DateTime  @default(now()) @map("created_at")
 
   school      School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   generatedBy User?  @relation(fields: [generatedById], references: [id])
@@ -423,35 +508,37 @@ model SmsLog {
   message     String   @db.Text
   studentId   String?  @map("student_id")
   studentName String?  @map("student_name")
-  status      String   // 'sent', 'failed'
+  status      String
   cost        Int      @default(0)
   response    String?  @db.Text
   sentBy      String   @map("sent_by")
   schoolId    String   @map("school_id")
   createdAt   DateTime @default(now()) @map("created_at")
 
-  school      School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
 
   @@map("sms_logs")
 }
 
+// ==================== BUDGET ====================
 
 model Budget {
-  id          String   @id @default(uuid())
-  category    String
-  amount      Decimal  @db.Decimal(15, 2)
-  period      String   // 'monthly', 'termly', 'yearly'
-  month       Int?     // 1-12 for monthly budgets
-  year        Int
-  termId      String?
-  spent       Decimal  @default(0) @db.Decimal(15, 2)
-  schoolId    String
-  createdBy   String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        String   @id @default(uuid())
+  category  String
+  amount    Decimal  @db.Decimal(15, 2)
+  period    String
+  month     Int?
+  year      Int
+  termId    String?  @map("term_id")
+  spent     Decimal  @default(0) @db.Decimal(15, 2)
+  schoolId  String   @map("school_id")
+  createdBy String   @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  school      School   @relation(fields: [schoolId], references: [id])
-  
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
   @@unique([schoolId, category, period, year, month])
   @@index([schoolId, year])
+  @@map("budgets")
 }

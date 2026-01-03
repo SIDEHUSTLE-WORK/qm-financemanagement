@@ -6,9 +6,11 @@ const authController = require('../controllers/authController');
 const incomeController = require('../controllers/incomeController');
 const expenseController = require('../controllers/expenseController');
 const studentController = require('../controllers/studentController');
+const reportController = require('../controllers/reportController');
 const smsController = require('../controllers/smsController');
-const budgetController = require('../controllers/budgetController');eportController = require('../controllers/reportController');
-const smsController = require('../controllers/smsController');
+const budgetController = require('../controllers/budgetController');
+const paymentPlanController = require('../controllers/paymentPlanController');
+const permissionController = require('../controllers/permissionController');
 const { getAuditLogs } = require('../middleware/audit');
 
 // Import middleware
@@ -56,6 +58,7 @@ router.get('/students/:id', authenticate, checkPermission('students', 'read'), s
 router.get('/students/:id/balance', authenticate, checkPermission('students', 'read'), studentController.getBalance);
 router.get('/students/:id/payments', authenticate, checkPermission('students', 'read'), studentController.getPayments);
 router.post('/students/:id/payments', authenticate, checkPermission('income', 'create'), studentController.recordPayment);
+
 router.post('/students', authenticate, checkPermission('students', 'create'), studentValidation, studentController.create);
 router.put('/students/:id', authenticate, checkPermission('students', 'update'), studentValidation, studentController.update);
 router.post('/students/promote', authenticate, authorize('super_admin', 'director'), studentController.promoteStudents);
@@ -279,13 +282,35 @@ router.get('/terms/current', authenticate, async (req, res) => {
 // ==================== AUDIT ROUTES ====================
 router.get('/audit-logs', authenticate, authorize('super_admin', 'director'), getAuditLogs);
 
-
 // ==================== BUDGET ROUTES ====================
-router.get('/budgets', authenticateToken, budgetController.getBudgets);
-router.post('/budgets', authenticateToken, budgetController.upsertBudget);
-router.post('/budgets/bulk', authenticateToken, budgetController.setBulkBudgets);
-router.delete('/budgets/:id', authenticateToken, budgetController.deleteBudget);
-router.get('/budgets/summary', authenticateToken, budgetController.getBudgetSummary);
+router.get('/budgets', authenticate, budgetController.getBudgets);
+router.post('/budgets', authenticate, budgetController.upsertBudget);
+router.post('/budgets/bulk', authenticate, budgetController.setBulkBudgets);
+router.delete('/budgets/:id', authenticate, budgetController.deleteBudget);
+router.get('/budgets/summary', authenticate, budgetController.getBudgetSummary);
+
+// ==================== PERMISSION & ROLE ROUTES ====================
+router.get('/roles', authenticate, permissionController.getRoles);
+router.post('/roles', authenticate, permissionController.createRole);
+router.put('/roles/:id', authenticate, permissionController.updateRole);
+router.delete('/roles/:id', authenticate, permissionController.deleteRole);
+router.get('/permissions/templates', authenticate, permissionController.getPermissionTemplates);
+router.post('/roles/initialize', authenticate, permissionController.initializeDefaultRoles);
+router.post('/roles/assign', authenticate, permissionController.assignRoleToUser);
+router.get('/users/with-roles', authenticate, permissionController.getUsersWithRoles);
+router.get('/permissions/me', authenticate, permissionController.getMyPermissions);
+
+// ==================== PAYMENT PLAN ROUTES ====================
+router.get('/payment-plans', authenticate, paymentPlanController.getPaymentPlans);
+router.post('/payment-plans', authenticate, paymentPlanController.createPaymentPlan);
+router.delete('/payment-plans/:id', authenticate, paymentPlanController.deletePaymentPlan);
+router.post('/payment-plans/assign', authenticate, paymentPlanController.assignPlanToStudent);
+router.get('/payment-plans/summary', authenticate, paymentPlanController.getPaymentPlanSummary);
+router.get('/payment-plans/student/:studentId', authenticate, paymentPlanController.getStudentPaymentPlans);
+router.get('/installments', authenticate, paymentPlanController.getAllInstallments);
+router.post('/installments/:id/pay', authenticate, paymentPlanController.recordInstallmentPayment);
+router.post('/installments/:id/remind', authenticate, paymentPlanController.sendInstallmentReminder);
+router.post('/installments/update-overdue', authenticate, paymentPlanController.updateOverdueStatuses);
 
 // ==================== RECEIPT VERIFICATION ====================
 // Public route - no auth needed (for parents to verify)
@@ -346,7 +371,6 @@ router.get('/verify/:receiptNumber', async (req, res) => {
     });
   }
 });
-
 
 // ==================== HEALTH CHECK ====================
 router.get('/health', (req, res) => {

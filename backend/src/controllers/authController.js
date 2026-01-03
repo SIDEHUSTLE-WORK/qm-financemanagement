@@ -35,7 +35,7 @@ const login = async (req, res) => {
   try {
     const { username, password } = req.body;
 
-    // Find user with school
+    // Find user with school AND role
     const user = await prisma.user.findFirst({
       where: {
         username: username.toLowerCase(),
@@ -48,6 +48,13 @@ const login = async (req, res) => {
             name: true,
             code: true,
             logoPath: true
+          }
+        },
+        role: {
+          select: {
+            id: true,
+            name: true,
+            permissions: true
           }
         }
       }
@@ -123,7 +130,7 @@ const login = async (req, res) => {
       schoolId: user.schoolId,
       userId: user.id,
       userName: user.fullName,
-      userRole: user.role,
+      userRole: user.role?.name || user.userRole,
       action: 'LOGIN',
       entityType: 'auth',
       description: 'User logged in successfully',
@@ -140,8 +147,10 @@ const login = async (req, res) => {
           username: user.username,
           fullName: user.fullName,
           email: user.email,
-          role: user.role,
-          permissions: user.permissions,
+          userRole: user.userRole,
+          roleName: user.role?.name || null,
+          roleId: user.role?.id || null,
+          permissions: user.role?.permissions || user.permissions || {},
           mustChangePassword: user.mustChangePassword
         },
         school: {
@@ -240,7 +249,7 @@ const logout = async (req, res) => {
       schoolId: req.user.schoolId,
       userId: req.user.id,
       userName: req.user.fullName,
-      userRole: req.user.role,
+      userRole: req.user.role?.name || req.user.userRole,
       action: 'LOGOUT',
       entityType: 'auth',
       description: 'User logged out',
@@ -299,7 +308,7 @@ const changePassword = async (req, res) => {
       schoolId: req.user.schoolId,
       userId: req.user.id,
       userName: req.user.fullName,
-      userRole: req.user.role,
+      userRole: req.user.role?.name || req.user.userRole,
       action: 'UPDATE',
       entityType: 'auth',
       description: 'Password changed',
@@ -331,8 +340,15 @@ const getProfile = async (req, res) => {
         fullName: true,
         email: true,
         phone: true,
-        role: true,
+        userRole: true,
         permissions: true,
+        role: {
+          select: {
+            id: true,
+            name: true,
+            permissions: true
+          }
+        },
         school: {
           select: {
             id: true,
@@ -355,8 +371,10 @@ const getProfile = async (req, res) => {
           fullName: user.fullName,
           email: user.email,
           phone: user.phone,
-          role: user.role,
-          permissions: user.permissions
+          userRole: user.userRole,
+          roleName: user.role?.name || null,
+          roleId: user.role?.id || null,
+          permissions: user.role?.permissions || user.permissions || {}
         },
         school: {
           id: user.school.id,
