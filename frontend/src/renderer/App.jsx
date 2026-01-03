@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, FileText, Download, Send, DollarSign, TrendingUp, Calendar, BarChart3, Receipt, Printer, Mail, LogOut, Settings as SettingsIcon, Edit, Search, Filter, X, Lock, User, Eye, EyeOff, Upload, Shield, MessageSquare } from 'lucide-react';
+import { Plus, Trash2, FileText, Download, Send, DollarSign, TrendingUp, Calendar, BarChart3, Receipt, Printer, Mail, LogOut, Settings as SettingsIcon, Edit, Search, Filter, X, Lock, User, Eye, EyeOff, Upload, Shield, MessageSquare, Phone } from 'lucide-react';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import QRCode from 'qrcode/lib/browser';
+import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area } from 'recharts';
 
 
 
@@ -40,6 +41,38 @@ const api = {
   post: (endpoint, body) => api.request(endpoint, { method: 'POST', body: JSON.stringify(body) }),
   put: (endpoint, body) => api.request(endpoint, { method: 'PUT', body: JSON.stringify(body) }),
   delete: (endpoint) => api.request(endpoint, { method: 'DELETE' })
+};
+
+// WhatsApp API helpers
+const whatsappApi = {
+  // Generate PDF and get download URL
+  generateReceiptPDF: async (paymentId) => {
+    return api.post(`/whatsapp/generate-receipt-pdf/${paymentId}`, {});
+  },
+  
+  // Get WhatsApp link for receipt
+  getReceiptLink: async (paymentId) => {
+    return api.get(`/whatsapp/receipt-link/${paymentId}`);
+  },
+  
+  // Get WhatsApp reminder link for student
+  getReminderLink: async (studentId, customMessage = null) => {
+    return api.post('/whatsapp/reminder-link', { studentId, customMessage });
+  },
+  
+  // Get bulk reminder links
+  getBulkReminderLinks: async (studentIds, customMessage = null) => {
+    return api.post('/whatsapp/bulk-reminder-links', { studentIds, customMessage });
+  },
+  
+  // Open WhatsApp with pre-filled message
+  openWhatsApp: (phone, message) => {
+    const formattedPhone = phone ? phone.replace(/^0/, '256').replace(/[^0-9]/g, '') : '';
+    const url = formattedPhone 
+      ? `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`
+      : `https://wa.me/?text=${encodeURIComponent(message)}`;
+    window.open(url, '_blank');
+  }
 };
 
 // SMS Center Component - MOVED OUTSIDE to prevent re-render issues
@@ -388,7 +421,7 @@ const SMSCenter = ({
                   type="button"
                   onClick={sendBulkSms} 
                   disabled={smsLoading || selectedDefaulters.length === 0 || !smsMessage} 
-                  className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium flex items-center gap-2 transition-colors"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium flex items-center gap-2 transition-colors"
                 >
                   {smsLoading ? (
                     <>
@@ -396,8 +429,52 @@ const SMSCenter = ({
                       Sending...
                     </>
                   ) : (
-                    <>📱 Send SMS ({formatCurrency(selectedDefaulters.length * 25)})</>
+                    <>📱 SMS ({formatCurrency(selectedDefaulters.length * 25)})</>
                   )}
+                </button>
+                <button 
+                  type="button"
+                  onClick={async () => {
+                    if (selectedDefaulters.length === 0) {
+                      alert('Please select at least one student');
+                      return;
+                    }
+                    if (!smsMessage) {
+                      alert('Please enter a message');
+                      return;
+                    }
+                    
+                    const res = await whatsappApi.getBulkReminderLinks(
+                      selectedDefaulters.map(s => s.id),
+                      smsMessage
+                    );
+                    
+                    if (res.success && res.data.length > 0) {
+                      // Open first one immediately
+                      window.open(res.data[0].whatsappUrl, '_blank');
+                      
+                      // Show list for others
+                      if (res.data.length > 1) {
+                        const remaining = res.data.slice(1);
+                        alert(`First WhatsApp opened!\n\nClick OK to see remaining ${remaining.length} links.\n\nNote: WhatsApp doesn't allow bulk auto-sending. You'll need to send each manually.`);
+                        
+                        // Create a simple modal or open all
+                        remaining.forEach((link, idx) => {
+                          setTimeout(() => {
+                            if (confirm(`Send to ${link.studentName}?\n${link.phone}\nBalance: ${formatCurrency(link.balance)}`)) {
+                              window.open(link.whatsappUrl, '_blank');
+                            }
+                          }, idx * 500);
+                        });
+                      }
+                    } else {
+                      alert('Could not generate WhatsApp links');
+                    }
+                  }}
+                  disabled={selectedDefaulters.length === 0 || !smsMessage} 
+                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium flex items-center gap-2 transition-colors"
+                >
+                  📲 WhatsApp (FREE)
                 </button>
               </div>
             </div>
@@ -419,6 +496,7 @@ const SMSCenter = ({
                     <th className="py-3 px-4 text-left text-sm font-semibold text-gray-700">Class</th>
                     <th className="py-3 px-4 text-left text-sm font-semibold text-gray-700">Parent Phone</th>
                     <th className="py-3 px-4 text-right text-sm font-semibold text-gray-700">Balance</th>
+                    <th className="py-3 px-4 text-center text-sm font-semibold text-gray-700">WhatsApp</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -460,6 +538,18 @@ const SMSCenter = ({
                         <td className="py-3 px-4 text-purple-600 font-medium">{student.className}</td>
                         <td className="py-3 px-4 text-gray-600">{student.phone || <span className="text-red-500">No phone</span>}</td>
                         <td className="py-3 px-4 text-right text-red-600 font-bold">{formatCurrency(student.balance)}</td>
+                        <td className="py-3 px-4 text-center">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              sendReminderViaWhatsApp(student, smsMessage);
+                            }}
+                            className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-medium hover:bg-green-200"
+                            title="Send WhatsApp Reminder"
+                          >
+                            📱 WA
+                          </button>
+                        </td>
                       </tr>
                     ))
                   )}
@@ -1514,6 +1604,122 @@ const SchoolFinanceApp = () => {
     return new Intl.NumberFormat('en-UG').format(amount) + ' UGX';
   };
 
+  // Analytics data processing
+  const getAnalyticsData = () => {
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    
+    // Monthly income vs expenses (last 12 months)
+    const monthlyData = [];
+    for (let i = 11; i >= 0; i--) {
+      const date = new Date(currentYear, now.getMonth() - i, 1);
+      const month = date.toLocaleString('default', { month: 'short' });
+      const year = date.getFullYear();
+      const monthNum = date.getMonth();
+      
+      const monthIncome = incomeEntries
+        .filter(e => {
+          const d = new Date(e.date);
+          return d.getMonth() === monthNum && d.getFullYear() === year && !e.studentId && e.category !== 'Old Balance';
+        })
+        .reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
+      
+      const monthSchoolFees = incomeEntries
+        .filter(e => {
+          const d = new Date(e.date);
+          return d.getMonth() === monthNum && d.getFullYear() === year && e.studentId;
+        })
+        .reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
+      
+      const monthExpenses = expenseEntries
+        .filter(e => {
+          const d = new Date(e.date);
+          return d.getMonth() === monthNum && d.getFullYear() === year;
+        })
+        .reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
+      
+      monthlyData.push({
+        name: `${month} ${year.toString().slice(-2)}`,
+        income: monthIncome,
+        schoolFees: monthSchoolFees,
+        expenses: monthExpenses,
+        profit: monthIncome + monthSchoolFees - monthExpenses
+      });
+    }
+    
+    // Income by category
+    const incomeByCategory = {};
+    incomeEntries
+      .filter(e => !e.studentId && e.category !== 'Old Balance')
+      .forEach(e => {
+        const cat = e.category || 'Other';
+        incomeByCategory[cat] = (incomeByCategory[cat] || 0) + parseFloat(e.amount || 0);
+      });
+    const incomeCategoryData = Object.entries(incomeByCategory)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+    
+    // Expenses by category
+    const expensesByCategory = {};
+    expenseEntries.forEach(e => {
+      const cat = e.category || 'Other';
+      expensesByCategory[cat] = (expensesByCategory[cat] || 0) + parseFloat(e.amount || 0);
+    });
+    const expenseCategoryData = Object.entries(expensesByCategory)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+    
+    // Daily collection trend (last 30 days)
+    const dailyData = [];
+    for (let i = 29; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      const dateStr = date.toISOString().split('T')[0];
+      
+      const dayIncome = incomeEntries
+        .filter(e => e.date === dateStr && !e.studentId)
+        .reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
+      
+      const dayFees = incomeEntries
+        .filter(e => e.date === dateStr && e.studentId)
+        .reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
+      
+      dailyData.push({
+        name: date.toLocaleDateString('en-US', { day: 'numeric', month: 'short' }),
+        income: dayIncome,
+        fees: dayFees,
+        total: dayIncome + dayFees
+      });
+    }
+    
+    // Payment method breakdown
+    const paymentMethods = {};
+    incomeEntries.forEach(e => {
+      const method = e.paymentMethod || 'Cash';
+      paymentMethods[method] = (paymentMethods[method] || 0) + parseFloat(e.amount || 0);
+    });
+    const paymentMethodData = Object.entries(paymentMethods)
+      .map(([name, value]) => ({ name, value }));
+    
+    // Top paying students
+    const studentPayments = {};
+    incomeEntries
+      .filter(e => e.studentId && e.studentName)
+      .forEach(e => {
+        studentPayments[e.studentName] = (studentPayments[e.studentName] || 0) + parseFloat(e.amount || 0);
+      });
+    const topStudents = Object.entries(studentPayments)
+      .map(([name, value]) => ({ name: name.length > 20 ? name.slice(0, 20) + '...' : name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 10);
+    
+    return { monthlyData, incomeCategoryData, expenseCategoryData, dailyData, paymentMethodData, topStudents };
+  };
+
+  const CHART_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
+
   // Dark mode helper classes
   const cardClass = darkMode 
     ? 'bg-gray-800 text-white' 
@@ -1796,7 +2002,64 @@ const SchoolFinanceApp = () => {
     doc.autoPrint();
     window.open(doc.output('bloburl'), '_blank');
   };
-  
+  const sendReceiptViaWhatsApp = async (entry) => {
+    try {
+      // First generate the PDF
+      const pdfRes = await whatsappApi.generateReceiptPDF(entry.id);
+      
+      if (!pdfRes.success) {
+        // Fallback: send text-only receipt via WhatsApp
+        const message = `🏫 *QUEEN MOTHER JUNIOR SCHOOL*\n\n` +
+          `✅ *PAYMENT RECEIPT*\n\n` +
+          `📄 Receipt No: ${entry.receiptNo}\n` +
+          `👤 Student: ${entry.studentName || 'N/A'}\n` +
+          `💰 Amount: ${formatCurrency(entry.amount)}\n` +
+          `📅 Date: ${entry.date}\n` +
+          `💳 Payment: ${entry.paymentMethod}\n\n` +
+          `Thank you for your payment! 🙏`;
+        
+        whatsappApi.openWhatsApp(entry.phone || '', message);
+        return;
+      }
+
+      // Open WhatsApp with PDF link
+      const phone = pdfRes.data.phone || '';
+      const message = `🏫 *QUEEN MOTHER JUNIOR SCHOOL*\n\n` +
+        `✅ *PAYMENT RECEIPT*\n\n` +
+        `📄 Receipt No: ${pdfRes.data.receiptNumber}\n` +
+        `👤 Student: ${pdfRes.data.studentName}\n` +
+        `💰 Amount: ${formatCurrency(pdfRes.data.amount)}\n\n` +
+        `📥 *Download Your Receipt:*\n${pdfRes.data.url}\n\n` +
+        `Thank you for your payment! 🙏`;
+
+      whatsappApi.openWhatsApp(phone, message);
+      
+    } catch (error) {
+      console.error('WhatsApp send error:', error);
+      alert('Error sending via WhatsApp. Please try again.');
+    }
+  };
+
+  const sendReminderViaWhatsApp = async (student, customMessage = null) => {
+    try {
+      const res = await whatsappApi.getReminderLink(student.id, customMessage);
+      
+      if (res.success) {
+        window.open(res.data.whatsappUrl, '_blank');
+      } else {
+        // Fallback
+        const message = customMessage || 
+          `🏫 QMJS: Dear Parent, ${student.fullName || student.firstName + ' ' + student.lastName} has an outstanding balance. Kindly clear fees. Contact: 0200939322`;
+        whatsappApi.openWhatsApp(student.phone || student.parentPhone, message);
+      }
+    } catch (error) {
+      console.error('WhatsApp reminder error:', error);
+      // Fallback to basic WhatsApp
+      const message = `🏫 QMJS: Dear Parent, ${student.fullName || 'your child'} has an outstanding balance of ${formatCurrency(student.balance || 0)}. Kindly clear fees. Contact: 0200939322`;
+      whatsappApi.openWhatsApp(student.phone || '', message);
+    }
+  };
+
   const filterIncomeEntries = () => {
     return incomeEntries.filter(entry => {
       const matchesSearch = entry.description.toLowerCase().includes(incomeSearchTerm.toLowerCase()) ||
@@ -2515,6 +2778,13 @@ const SchoolFinanceApp = () => {
                             <Printer className="w-4 h-4" />
                           </button>
                           <button
+                            onClick={() => sendReceiptViaWhatsApp(entry)}
+                            className="text-green-600 hover:text-green-700"
+                            title="Send via WhatsApp"
+                          >
+                            <Phone className="w-4 h-4" />
+                          </button>
+                          <button
                             onClick={() => {
                               editIncomeRef.current = { ...entry };
                               setEditingIncome(entry);
@@ -3024,58 +3294,49 @@ const SchoolFinanceApp = () => {
     // Colors for charts
     const COLORS = ['#10B981', '#3B82F6', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#14B8A6', '#F97316', '#6366F1', '#84CC16'];
     
-    // Simple Pie Chart Component
-    const SimplePieChart = ({ data, title, colors = COLORS }) => {
+    // Recharts Pie Chart Component
+    const RechartsPieChart = ({ data, title, colors = COLORS }) => {
       if (!data || data.length === 0) {
         return (
-          <div className="bg-white rounded-xl shadow-md p-6">
-            <h3 className="text-lg font-bold text-gray-800 mb-4">{title}</h3>
-            <div className="text-center py-8 text-gray-500">No data available</div>
+          <div className={`rounded-xl shadow-md p-6 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+            <h3 className={`text-lg font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-800'}`}>{title}</h3>
+            <div className={`text-center py-8 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>No data available</div>
           </div>
         );
       }
 
       const total = data.reduce((sum, item) => sum + item.value, 0);
-      let currentAngle = 0;
 
       return (
-        <div className="bg-white rounded-xl shadow-md p-6">
-          <h3 className="text-lg font-bold text-gray-800 mb-4">{title}</h3>
-          <div className="flex items-center justify-center">
-            <svg width="200" height="200" viewBox="0 0 200 200">
-              {data.map((item, index) => {
-                const percentage = (item.value / total) * 100;
-                const angle = (percentage / 100) * 360;
-                const startAngle = currentAngle;
-                currentAngle += angle;
-                
-                const x1 = 100 + 80 * Math.cos((startAngle - 90) * Math.PI / 180);
-                const y1 = 100 + 80 * Math.sin((startAngle - 90) * Math.PI / 180);
-                const x2 = 100 + 80 * Math.cos((startAngle + angle - 90) * Math.PI / 180);
-                const y2 = 100 + 80 * Math.sin((startAngle + angle - 90) * Math.PI / 180);
-                const largeArcFlag = angle > 180 ? 1 : 0;
-
-                return (
-                  <path
-                    key={index}
-                    d={`M 100 100 L ${x1} ${y1} A 80 80 0 ${largeArcFlag} 1 ${x2} ${y2} Z`}
-                    fill={colors[index % colors.length]}
-                    stroke="white"
-                    strokeWidth="2"
-                  />
-                );
-              })}
-              <circle cx="100" cy="100" r="40" fill="white" />
-              <text x="100" y="95" textAnchor="middle" className="text-xs font-bold fill-gray-800">Total</text>
-              <text x="100" y="115" textAnchor="middle" className="text-sm font-bold fill-gray-800">{formatCurrency(total).replace(' UGX', '')}</text>
-            </svg>
-          </div>
-          <div className="mt-4 grid grid-cols-2 gap-2">
+        <div className={`rounded-xl shadow-md p-6 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+          <h3 className={`text-lg font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-800'}`}>{title}</h3>
+          <ResponsiveContainer width="100%" height={220}>
+            <PieChart>
+              <Pie
+                data={data}
+                cx="50%"
+                cy="50%"
+                innerRadius={50}
+                outerRadius={80}
+                paddingAngle={2}
+                dataKey="value"
+              >
+                {data.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />
+                ))}
+              </Pie>
+              <Tooltip 
+                formatter={(value) => formatCurrency(value)} 
+                contentStyle={{ backgroundColor: darkMode ? '#1f2937' : '#fff', border: 'none', borderRadius: '8px' }}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="mt-2 grid grid-cols-2 gap-2">
             {data.slice(0, 6).map((item, index) => (
               <div key={index} className="flex items-center gap-2 text-sm">
                 <div className="w-3 h-3 rounded-full" style={{ backgroundColor: colors[index % colors.length] }}></div>
-                <span className="text-gray-600 truncate">{item.name}</span>
-                <span className="font-bold text-gray-800 ml-auto">{((item.value / total) * 100).toFixed(0)}%</span>
+                <span className={`truncate ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>{item.name}</span>
+                <span className={`font-bold ml-auto ${darkMode ? 'text-white' : 'text-gray-800'}`}>{((item.value / total) * 100).toFixed(0)}%</span>
               </div>
             ))}
           </div>
@@ -3083,53 +3344,64 @@ const SchoolFinanceApp = () => {
       );
     };
 
-    // Simple Bar Chart Component
-    const SimpleBarChart = ({ data, title }) => {
+    // Recharts Area Chart Component for Daily Trend
+    const RechartsAreaChart = ({ data, title }) => {
       if (!data || data.length === 0) {
         return (
-          <div className="bg-white rounded-xl shadow-md p-6">
-            <h3 className="text-lg font-bold text-gray-800 mb-4">{title}</h3>
-            <div className="text-center py-8 text-gray-500">No data available</div>
+          <div className={`rounded-xl shadow-md p-6 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+            <h3 className={`text-lg font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-800'}`}>{title}</h3>
+            <div className={`text-center py-8 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>No data available</div>
           </div>
         );
       }
 
-      const maxValue = Math.max(...data.map(d => Math.max(d.income, d.expenses)));
+      return (
+        <div className={`rounded-xl shadow-md p-6 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+          <h3 className={`text-lg font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-800'}`}>{title}</h3>
+          <ResponsiveContainer width="100%" height={280}>
+            <AreaChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#374151' : '#e5e7eb'} />
+              <XAxis dataKey="date" stroke={darkMode ? '#9ca3af' : '#6b7280'} fontSize={10} interval={2} tickFormatter={(v) => v.slice(5)} />
+              <YAxis stroke={darkMode ? '#9ca3af' : '#6b7280'} fontSize={10} tickFormatter={(v) => (v/1000000).toFixed(1) + 'M'} />
+              <Tooltip 
+                formatter={(value) => formatCurrency(value)} 
+                contentStyle={{ backgroundColor: darkMode ? '#1f2937' : '#fff', border: 'none', borderRadius: '8px' }}
+              />
+              <Legend />
+              <Area type="monotone" dataKey="income" stackId="1" stroke="#10b981" fill="#10b981" fillOpacity={0.6} name="Income" />
+              <Area type="monotone" dataKey="expenses" stroke="#ef4444" fill="#ef4444" fillOpacity={0.4} name="Expenses" />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      );
+    };
+
+    // Recharts Horizontal Bar Chart Component
+    const RechartsBarChart = ({ data, title, color = '#3b82f6' }) => {
+      if (!data || data.length === 0) {
+        return (
+          <div className={`rounded-xl shadow-md p-6 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+            <h3 className={`text-lg font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-800'}`}>{title}</h3>
+            <div className={`text-center py-8 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>No data available</div>
+          </div>
+        );
+      }
 
       return (
-        <div className="bg-white rounded-xl shadow-md p-6">
-          <h3 className="text-lg font-bold text-gray-800 mb-4">{title}</h3>
-          <div className="flex items-end gap-2 h-48 overflow-x-auto">
-            {data.slice(-14).map((item, index) => (
-              <div key={index} className="flex flex-col items-center min-w-[40px]">
-                <div className="flex gap-1 items-end h-36">
-                  <div 
-                    className="w-4 bg-green-500 rounded-t"
-                    style={{ height: `${(item.income / maxValue) * 100}%`, minHeight: item.income > 0 ? '4px' : '0' }}
-                    title={`Income: ${formatCurrency(item.income)}`}
-                  ></div>
-                  <div 
-                    className="w-4 bg-red-500 rounded-t"
-                    style={{ height: `${(item.expenses / maxValue) * 100}%`, minHeight: item.expenses > 0 ? '4px' : '0' }}
-                    title={`Expenses: ${formatCurrency(item.expenses)}`}
-                  ></div>
-                </div>
-                <span className="text-xs text-gray-500 mt-1 transform -rotate-45 origin-top-left">
-                  {item.date.slice(5)}
-                </span>
-              </div>
-            ))}
-          </div>
-          <div className="flex justify-center gap-6 mt-4">
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 bg-green-500 rounded"></div>
-              <span className="text-sm text-gray-600">Income</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 bg-red-500 rounded"></div>
-              <span className="text-sm text-gray-600">Expenses</span>
-            </div>
-          </div>
+        <div className={`rounded-xl shadow-md p-6 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+          <h3 className={`text-lg font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-800'}`}>{title}</h3>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={data.slice(0, 8)} layout="vertical">
+              <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#374151' : '#e5e7eb'} />
+              <XAxis type="number" stroke={darkMode ? '#9ca3af' : '#6b7280'} fontSize={10} tickFormatter={(v) => (v/1000000).toFixed(1) + 'M'} />
+              <YAxis dataKey="name" type="category" stroke={darkMode ? '#9ca3af' : '#6b7280'} fontSize={9} width={80} />
+              <Tooltip 
+                formatter={(value) => formatCurrency(value)} 
+                contentStyle={{ backgroundColor: darkMode ? '#1f2937' : '#fff', border: 'none', borderRadius: '8px' }}
+              />
+              <Bar dataKey="value" fill={color} radius={[0, 4, 4, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
         </div>
       );
     };
@@ -3275,17 +3547,17 @@ const SchoolFinanceApp = () => {
 
           {/* Charts Row 1 */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <SimplePieChart 
+            <RechartsPieChart 
               data={analyticsData.incomeByCategory} 
               title="📊 Income by Category" 
               colors={['#10B981', '#3B82F6', '#F59E0B', '#8B5CF6', '#EC4899', '#14B8A6']}
             />
-            <SimplePieChart 
+            <RechartsPieChart 
               data={analyticsData.expensesByCategory} 
               title="📊 Expenses by Category" 
               colors={['#EF4444', '#F97316', '#F59E0B', '#84CC16', '#14B8A6', '#6366F1']}
             />
-            <SimplePieChart 
+            <RechartsPieChart 
               data={analyticsData.paymentMethods} 
               title="💳 Payment Methods" 
               colors={['#10B981', '#3B82F6', '#F59E0B', '#8B5CF6']}
@@ -3293,10 +3565,24 @@ const SchoolFinanceApp = () => {
           </div>
 
           {/* Daily Trend Chart */}
-          <SimpleBarChart 
+          <RechartsAreaChart 
             data={analyticsData.dailyTrend} 
             title="📈 Daily Income vs Expenses Trend"
           />
+
+          {/* Additional Charts Row */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <RechartsBarChart 
+              data={analyticsData.incomeByCategory} 
+              title="💰 Top Income Categories" 
+              color="#10b981"
+            />
+            <RechartsBarChart 
+              data={analyticsData.expensesByCategory} 
+              title="💸 Top Expense Categories" 
+              color="#ef4444"
+            />
+          </div>
 
           {/* Top Categories Tables */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -4423,13 +4709,31 @@ const SchoolFinanceApp = () => {
                   </div>
                 </div>
 
-                <button
-                  onClick={recordPayment}
-                  className="w-full mt-6 bg-green-600 hover:bg-green-700 text-white px-6 py-4 rounded-lg font-bold text-lg flex items-center justify-center gap-2"
-                >
-                  <Receipt className="w-6 h-6" />
-                  Record Payment & Print Receipt
-                </button>
+                <div className="flex gap-3 mt-6">
+                  <button
+                    onClick={recordPayment}
+                    className="flex-1 bg-green-600 hover:bg-green-700 text-white px-6 py-4 rounded-lg font-bold text-lg flex items-center justify-center gap-2"
+                  >
+                    <Receipt className="w-6 h-6" />
+                    Record & Print
+                  </button>
+                  <button
+                    onClick={async () => {
+                      await recordPayment();
+                      // After recording, the latest entry should be first in incomeEntries
+                      setTimeout(() => {
+                        const latestEntry = incomeEntries[0];
+                        if (latestEntry && latestEntry.studentId) {
+                          sendReceiptViaWhatsApp(latestEntry);
+                        }
+                      }, 1000);
+                    }}
+                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-4 rounded-lg font-bold text-lg flex items-center justify-center gap-2"
+                  >
+                    <Phone className="w-6 h-6" />
+                    Record & WhatsApp
+                  </button>
+                </div>
               </div>
             )}
 
