@@ -419,8 +419,11 @@ const SMSCenter = ({
                 </button>
                 <button 
                   type="button"
-                  onClick={sendBulkSms} 
-                  disabled={smsLoading || selectedDefaulters.length === 0 || !smsMessage} 
+                  onClick={() => {
+                    console.log('SMS Click - selectedDefaulters:', selectedDefaulters.length, 'message:', smsMessage?.length);
+                    sendBulkSms();
+                  }} 
+                  disabled={smsLoading || !selectedDefaulters || selectedDefaulters.length === 0 || !smsMessage || smsMessage.trim() === ''} 
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium flex items-center gap-2 transition-colors"
                 >
                   {smsLoading ? (
@@ -542,7 +545,19 @@ const SMSCenter = ({
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              sendReminderViaWhatsApp(student, smsMessage);
+                              const phone = student.phone || student.parentPhone;
+                              if (!phone) {
+                                alert('No phone number for this student');
+                                return;
+                              }
+                              const formattedPhone = phone.replace(/^0/, '256').replace(/[^0-9]/g, '');
+                              const msg = smsMessage 
+                                ? smsMessage
+                                    .replace(/{student}/g, student.fullName || `${student.firstName} ${student.lastName}`)
+                                    .replace(/{balance}/g, formatCurrency(student.balance || 0))
+                                    .replace(/{class}/g, student.className || 'N/A')
+                                : `Dear Parent, ${student.fullName || student.firstName} has a balance of ${formatCurrency(student.balance || 0)}. Kindly clear. - QMJS`;
+                              window.open(`https://wa.me/${formattedPhone}?text=${encodeURIComponent(msg)}`, '_blank');
                             }}
                             className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-medium hover:bg-green-200"
                             title="Send WhatsApp Reminder"
@@ -2144,133 +2159,197 @@ const SchoolFinanceApp = () => {
 
   if (!isAuthenticated) {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-purple-900 flex items-center justify-center p-4">
-      <div className="max-w-md w-full">
-        <div className="bg-white rounded-2xl shadow-2xl p-8 mb-6 text-center">
-          {schoolLogo ? (
-            <img src={schoolLogo} alt="School Logo" className="w-24 h-24 mx-auto mb-4 object-contain" />
-          ) : (
-            <div className="w-24 h-24 mx-auto mb-4 bg-blue-100 rounded-full flex items-center justify-center">
-              <Receipt className="w-12 h-12 text-blue-600" />
-            </div>
-          )}
-          <h1 className="text-3xl font-bold text-gray-800 mb-2">{schoolName}</h1>
-          <p className="text-gray-600">Financial Management System</p>
+    <div className="min-h-screen flex">
+      {/* Left Side - Branding & Logo */}
+      <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden">
+        {/* Animated Gradient Background */}
+        <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900">
+          {/* Decorative Orbs */}
+          <div className="absolute top-20 left-20 w-72 h-72 bg-gradient-to-r from-amber-400/30 to-yellow-500/20 rounded-full blur-3xl animate-pulse"></div>
+          <div className="absolute bottom-20 right-20 w-96 h-96 bg-gradient-to-r from-blue-500/20 to-purple-600/20 rounded-full blur-3xl animate-pulse" style={{animationDelay: '1s'}}></div>
+          <div className="absolute top-1/2 left-1/3 w-64 h-64 bg-gradient-to-r from-emerald-400/10 to-teal-500/10 rounded-full blur-3xl animate-pulse" style={{animationDelay: '2s'}}></div>
+          
+          {/* Gold Accent Lines */}
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-amber-400 to-transparent"></div>
+          <div className="absolute bottom-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-amber-400 to-transparent"></div>
         </div>
-
-        <div className="bg-white rounded-2xl shadow-2xl p-8">
-          <div className="flex items-center justify-center mb-6">
-            <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
-              <Lock className="w-6 h-6 text-blue-600" />
+        
+        {/* Content */}
+        <div className="relative z-10 flex flex-col items-center justify-center w-full p-12">
+          {/* Logo Container with Glow */}
+          <div className="relative mb-8">
+            <div className="absolute inset-0 bg-gradient-to-r from-amber-400 to-yellow-500 rounded-full blur-2xl opacity-30 animate-pulse"></div>
+            <div className="relative w-40 h-40 bg-white/10 backdrop-blur-xl rounded-full flex items-center justify-center border-2 border-amber-400/50 shadow-2xl">
+              {schoolLogo ? (
+                <img src={schoolLogo} alt="School Logo" className="w-32 h-32 object-contain rounded-full" />
+              ) : (
+                <Receipt className="w-20 h-20 text-amber-400" />
+              )}
             </div>
           </div>
-          <h2 className="text-2xl font-bold text-center text-gray-800 mb-2">Welcome Back</h2>
-          <p className="text-center text-gray-600 mb-6">Sign in to continue</p>
-
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Username</label>
-              <div className="relative">
-                <User className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                <input
-                  type="text"
-                  value={loginUsername}
-                  onChange={(e) => setLoginUsername(e.target.value)}
-                  onKeyPress={(e) => {
-                    if (e.key === 'Enter' && loginUsername && loginPassword) {
-                      handleLogin(e);
-                    }
-                  }}
-                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                  placeholder="Enter your username"
-                />
+          
+          {/* School Name with Gold Gradient */}
+          <h1 className="text-4xl font-bold text-center mb-4 bg-gradient-to-r from-amber-200 via-yellow-400 to-amber-200 bg-clip-text text-transparent">
+            {schoolName}
+          </h1>
+          
+          <div className="w-24 h-1 bg-gradient-to-r from-transparent via-amber-400 to-transparent mb-6"></div>
+          
+          <p className="text-xl text-blue-100 text-center mb-8 font-light">
+            Financial Management System
+          </p>
+          
+          {/* Features List */}
+          <div className="space-y-4 text-blue-100/80">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-amber-400/20 flex items-center justify-center">
+                <Receipt className="w-4 h-4 text-amber-400" />
               </div>
+              <span>School Fees Collection & Receipts</span>
             </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
-              <div className="relative">
-                <Lock className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                <input
-                  type={showPassword ? "text" : "password"}
-                  value={loginPassword}
-                  onChange={(e) => setLoginPassword(e.target.value)}
-                  onKeyPress={(e) => {
-                    if (e.key === 'Enter' && loginUsername && loginPassword) {
-                      handleLogin(e);
-                    }
-                  }}
-                  className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                  placeholder="Enter your password"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                >
-                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                </button>
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-emerald-400/20 flex items-center justify-center">
+                <TrendingUp className="w-4 h-4 text-emerald-400" />
               </div>
+              <span>Income & Expense Tracking</span>
             </div>
-
-            {loginError && (
-              <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg text-sm">
-                {loginError}
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-purple-400/20 flex items-center justify-center">
+                <BarChart3 className="w-4 h-4 text-purple-400" />
               </div>
-            )}
+              <span>Reports & Analytics</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-blue-400/20 flex items-center justify-center">
+                <MessageSquare className="w-4 h-4 text-blue-400" />
+              </div>
+              <span>SMS & WhatsApp Integration</span>
+            </div>
+          </div>
+          
+          {/* Bottom Quote */}
+          <div className="absolute bottom-8 left-0 right-0 text-center">
+            <p className="text-blue-200/60 text-sm italic">"Excellence in Financial Management"</p>
+          </div>
+        </div>
+      </div>
+      
+      {/* Right Side - Login Form */}
+      <div className="w-full lg:w-1/2 flex items-center justify-center p-8 bg-gradient-to-br from-slate-50 via-white to-blue-50 relative overflow-hidden">
+        {/* Subtle Background Pattern */}
+        <div className="absolute inset-0 opacity-5">
+          <div className="absolute top-10 right-10 w-40 h-40 bg-blue-600 rounded-full blur-3xl"></div>
+          <div className="absolute bottom-10 left-10 w-60 h-60 bg-amber-500 rounded-full blur-3xl"></div>
+        </div>
+        
+        <div className="relative z-10 w-full max-w-md">
+          {/* Mobile Logo (shown only on small screens) */}
+          <div className="lg:hidden text-center mb-8">
+            <div className="w-20 h-20 mx-auto mb-4 bg-gradient-to-br from-slate-800 to-blue-900 rounded-2xl flex items-center justify-center shadow-xl">
+              {schoolLogo ? (
+                <img src={schoolLogo} alt="School Logo" className="w-16 h-16 object-contain" />
+              ) : (
+                <Receipt className="w-10 h-10 text-amber-400" />
+              )}
+            </div>
+            <h1 className="text-xl font-bold text-gray-800">{schoolName}</h1>
+          </div>
+          
+          {/* Welcome Header */}
+          <div className="text-center mb-8">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-slate-800 via-blue-900 to-indigo-900 rounded-2xl shadow-xl mb-4">
+              <Lock className="w-8 h-8 text-amber-400" />
+            </div>
+            <h2 className="text-3xl font-bold text-gray-800 mb-2">Welcome Back</h2>
+            <p className="text-gray-500">Sign in to access your dashboard</p>
+          </div>
+          
+          {/* Login Form */}
+          <div className="bg-white rounded-2xl shadow-xl p-8 border border-gray-100">
+            <div className="space-y-5">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Username</label>
+                <div className="relative">
+                  <User className="w-5 h-5 absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    value={loginUsername}
+                    onChange={(e) => setLoginUsername(e.target.value)}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter' && loginUsername && loginPassword) {
+                        handleLogin(e);
+                      }
+                    }}
+                    className="w-full pl-12 pr-4 py-3.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:bg-white transition-all duration-200 focus:outline-none"
+                    placeholder="Enter your username"
+                  />
+                </div>
+              </div>
 
-            <button
-              onClick={(e) => {
-                e.preventDefault();
-                if (!loginUsername || !loginPassword) {
-                  setLoginError('Please enter both username and password');
-                  return;
-                }
-                handleLogin(e);
-              }}
-              className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white py-3 rounded-lg font-medium transition-all duration-200 transform hover:scale-105 shadow-lg"
-            >
-              Sign In
-            </button>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Password</label>
+                <div className="relative">
+                  <Lock className="w-5 h-5 absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter' && loginUsername && loginPassword) {
+                        handleLogin(e);
+                      }
+                    }}
+                    className="w-full pl-12 pr-12 py-3.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:bg-white transition-all duration-200 focus:outline-none"
+                    placeholder="Enter your password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                  >
+                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </button>
+                </div>
+              </div>
 
-            <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-              <p className="text-xs font-bold text-yellow-800 mb-2">Debug Tools</p>
+              {loginError && (
+                <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-xl text-sm flex items-center gap-2">
+                  <div className="w-5 h-5 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                    <span className="text-red-600 text-xs">!</span>
+                  </div>
+                  {loginError}
+                </div>
+              )}
+
               <button
-                type="button"
                 onClick={(e) => {
                   e.preventDefault();
-                  e.stopPropagation();
-                  const users = [
-                    {
-                      id: 1,
-                      username: 'shadia',
-                      password: 'shadia123',
-                      name: 'Ms. SHADIA',
-                      role: 'Bursar',
-                      canEdit: true,
-                      canView: true
-                    }
-                  ];
-                  localStorage.setItem('qm_users', JSON.stringify(users));
-                  alert('Users created! Now enter: shadia / shadia123');
+                  if (!loginUsername || !loginPassword) {
+                    setLoginError('Please enter both username and password');
+                    return;
+                  }
+                  handleLogin(e);
                 }}
-                className="w-full bg-yellow-600 hover:bg-yellow-700 text-white py-2 rounded text-xs"
+                className="w-full py-4 bg-gradient-to-r from-slate-800 via-blue-900 to-indigo-900 hover:from-slate-900 hover:via-blue-950 hover:to-indigo-950 text-white rounded-xl font-semibold transition-all duration-300 transform hover:scale-[1.02] shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
               >
-                HELLO ADMINISTRATOR
+                <span>Sign In</span>
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                </svg>
               </button>
             </div>
-
-            <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
-              <p className="text-xs text-gray-600 font-semibold mb-2">Do not delete entries.</p>
-              <p className="text-xs text-gray-700">Madam <span className="font-mono font-bold">Shadia</span></p>
-              <p className="text-xs text-gray-700">owulidde? <span className="font-mono font-bold"></span></p>
-            </div>
+          </div>
+          
+          {/* Footer */}
+          <div className="mt-8 text-center">
+            <p className="text-gray-400 text-sm">
+              © 2025 {schoolName}
+            </p>
+            <p className="text-gray-300 text-xs mt-1">
+              Secure Financial Management System
+            </p>
           </div>
         </div>
-
-        <p className="text-center text-white text-sm mt-6 opacity-80">
-          © 2025 {schoolName}
-        </p>
       </div>
     </div>
   );
@@ -7594,11 +7673,11 @@ const SchoolFinanceApp = () => {
 
   return (
     <div className={`min-h-screen transition-colors duration-300 ${darkMode ? 'bg-gray-900' : 'bg-gray-100'}`}>
-      <header className="bg-gradient-to-r from-blue-600 to-blue-800 text-white shadow-lg print:hidden">
+      <header className="bg-gradient-to-r from-slate-900 via-blue-950 to-indigo-950 text-white shadow-2xl print:hidden border-b border-amber-500/20">
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center overflow-hidden">
+              <div className="w-12 h-12 bg-gradient-to-br from-amber-400 to-yellow-500 rounded-full flex items-center justify-center overflow-hidden shadow-lg ring-2 ring-amber-300/50">
                 {schoolLogo ? (
                   <img src={schoolLogo} alt="School Logo" className="w-full h-full object-cover" />
                 ) : (
@@ -7606,8 +7685,8 @@ const SchoolFinanceApp = () => {
                 )}
               </div>
               <div>
-                <h1 className="text-xl font-bold">{schoolName}</h1>
-                <p className="text-sm text-blue-100">Financial Management System</p>
+                <h1 className="text-xl font-bold bg-gradient-to-r from-white via-amber-100 to-white bg-clip-text text-transparent">{schoolName}</h1>
+                <p className="text-sm text-amber-200/80">Financial Management System</p>
               </div>
             </div>
             <div className="flex items-center gap-4">
@@ -7617,14 +7696,14 @@ const SchoolFinanceApp = () => {
               </div>
               <button 
                 onClick={() => setDarkMode(!darkMode)}
-                className="bg-blue-700 hover:bg-blue-800 p-2 rounded-lg"
+                className="bg-white/10 hover:bg-white/20 backdrop-blur-sm p-2 rounded-lg border border-amber-400/30 transition-all duration-200"
                 title={darkMode ? 'Light Mode' : 'Dark Mode'}
               >
                 {darkMode ? '☀️' : '🌙'}
               </button>
               <button 
                 onClick={handleLogout}
-                className="bg-blue-700 hover:bg-blue-800 px-4 py-2 rounded-lg flex items-center gap-2"
+                className="bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 text-slate-900 px-4 py-2 rounded-lg flex items-center gap-2 font-semibold shadow-lg transition-all duration-200"
               >
                 <LogOut className="w-4 h-4" />
                 Logout
