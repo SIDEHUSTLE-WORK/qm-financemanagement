@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Trash2, FileText, Download, Send, DollarSign, TrendingUp, Calendar, BarChart3, Receipt, Printer, Mail, LogOut, Settings as SettingsIcon, Edit, Search, Filter, X, Lock, User, Eye, EyeOff, Upload, Shield, MessageSquare } from 'lucide-react';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
+import QRCode from 'qrcode/lib/browser';
 
 
  // ==================== API CONFIGURATION ====================
@@ -570,6 +571,27 @@ const SchoolFinanceApp = () => {
   const [smsFilterClass, setSmsFilterClass] = useState('');
   const [classes, setClasses] = useState([]);
   
+  // Budget State
+  const [budgets, setBudgets] = useState([]);
+  const [budgetSummary, setBudgetSummary] = useState(null);
+  const [budgetLoading, setBudgetLoading] = useState(false);
+  
+  // Payment Plans State
+  const [paymentPlans, setPaymentPlans] = useState([]);
+  const [installments, setInstallments] = useState([]);
+  const [planSummary, setPlanSummary] = useState(null);
+  const [plansLoading, setPlansLoading] = useState(false);
+  
+  // Permissions State
+  const [userPermissions, setUserPermissions] = useState(null);
+  const [roles, setRoles] = useState([]);
+  const [usersWithRoles, setUsersWithRoles] = useState([]);
+  
+  const [darkMode, setDarkMode] = useState(() => {
+    const saved = localStorage.getItem('qm_dark_mode');
+    return saved === 'true';
+  });
+  
   // API Categories State
   const [apiIncomeCategories, setApiIncomeCategories] = useState([]);
   const [apiExpenseCategories, setApiExpenseCategories] = useState([]);
@@ -809,6 +831,210 @@ const SchoolFinanceApp = () => {
     setSelectedDefaulters(selectedDefaulters.length === defaulters.length ? [] : [...defaulters]);
   };
 
+  // ==================== BUDGET FUNCTIONS ====================
+  const loadBudgets = async (year, month, period = 'monthly') => {
+    setBudgetLoading(true);
+    const params = new URLSearchParams({ year, period });
+    if (period === 'monthly') params.append('month', month);
+    
+    const res = await api.get(`/budgets?${params.toString()}`);
+    if (res.success) {
+      setBudgets(res.data || []);
+    }
+    setBudgetLoading(false);
+  };
+
+  const loadBudgetSummary = async (year, month) => {
+    const res = await api.get(`/budgets/summary?year=${year}&month=${month}`);
+    if (res.success) {
+      setBudgetSummary(res.data);
+    }
+  };
+
+  const saveBudget = async (category, amount, period, year, month) => {
+    const res = await api.post('/budgets', { category, amount, period, year, month });
+    if (res.success) {
+      loadBudgets(year, month, period);
+      loadBudgetSummary(year, month);
+      return true;
+    }
+    return false;
+  };
+
+  const saveBulkBudgets = async (budgetsData, period, year, month) => {
+    const res = await api.post('/budgets/bulk', { 
+      budgets: budgetsData, 
+      period, 
+      year, 
+      month 
+    });
+    if (res.success) {
+      alert(`${res.message}`);
+      loadBudgets(year, month, period);
+      loadBudgetSummary(year, month);
+      return true;
+    }
+    alert(res.message || 'Failed to save budgets');
+    return false;
+  };
+
+  const deleteBudget = async (id, year, month, period) => {
+    if (!confirm('Delete this budget?')) return;
+    const res = await api.delete(`/budgets/${id}`);
+    if (res.success) {
+      loadBudgets(year, month, period);
+      loadBudgetSummary(year, month);
+    }
+  };
+
+  // ==================== PAYMENT PLAN FUNCTIONS ====================
+  const loadPaymentPlans = async () => {
+    const res = await api.get('/payment-plans');
+    if (res.success) setPaymentPlans(res.data || []);
+  };
+
+  const loadInstallments = async (filter = '') => {
+    setPlansLoading(true);
+    const res = await api.get(`/installments${filter}`);
+    if (res.success) setInstallments(res.data || []);
+    setPlansLoading(false);
+  };
+
+  const loadPlanSummary = async () => {
+    const res = await api.get('/payment-plans/summary');
+    if (res.success) setPlanSummary(res.data);
+  };
+
+  const createPaymentPlan = async (planData) => {
+    const res = await api.post('/payment-plans', planData);
+    if (res.success) {
+      loadPaymentPlans();
+      return res.data;
+    }
+    return null;
+  };
+
+  const assignPlanToStudent = async (data) => {
+    const res = await api.post('/payment-plans/assign', data);
+    if (res.success) {
+      alert('Payment plan assigned successfully!');
+      loadInstallments();
+      loadPlanSummary();
+      return true;
+    }
+    alert(res.message || 'Failed to assign plan');
+    return false;
+  };
+
+  const recordInstallmentPayment = async (installmentId, amount) => {
+    const res = await api.post(`/installments/${installmentId}/pay`, { amount });
+    if (res.success) {
+      loadInstallments();
+      loadPlanSummary();
+      return true;
+    }
+    alert(res.message || 'Failed to record payment');
+    return false;
+  };
+
+  const sendInstallmentReminder = async (installmentId) => {
+    const res = await api.post(`/installments/${installmentId}/remind`, {});
+    if (res.success) {
+      alert('Reminder sent successfully!');
+      loadInstallments();
+      return true;
+    }
+    alert(res.message || 'Failed to send reminder');
+    return false;
+  };
+
+  // ==================== PERMISSION FUNCTIONS ====================
+  const loadMyPermissions = async () => {
+    const res = await api.get('/permissions/me');
+    if (res.success) {
+      setUserPermissions(res.data);
+    }
+  };
+
+  const loadRoles = async () => {
+    const res = await api.get('/roles');
+    if (res.success) setRoles(res.data || []);
+  };
+
+  const loadUsersWithRoles = async () => {
+    const res = await api.get('/users/with-roles');
+    if (res.success) setUsersWithRoles(res.data || []);
+  };
+
+  const initializeRoles = async () => {
+    const res = await api.post('/roles/initialize', {});
+    if (res.success) {
+      alert(res.message);
+      loadRoles();
+    }
+  };
+
+  const assignRole = async (userId, roleId) => {
+    const res = await api.post('/roles/assign', { userId, roleId });
+    if (res.success) {
+      alert('Role assigned successfully!');
+      loadUsersWithRoles();
+      return true;
+    }
+    alert(res.message || 'Failed to assign role');
+    return false;
+  };
+
+  const createRole = async (roleData) => {
+    const res = await api.post('/roles', roleData);
+    if (res.success) {
+      loadRoles();
+      return true;
+    }
+    alert(res.message || 'Failed to create role');
+    return false;
+  };
+
+  const updateRolePermissions = async (roleId, permissions) => {
+    const res = await api.put(`/roles/${roleId}`, { permissions });
+    if (res.success) {
+      alert('Permissions updated!');
+      loadRoles();
+      loadMyPermissions();
+      return true;
+    }
+    alert(res.message || 'Failed to update permissions');
+    return false;
+  };
+
+  // Permission check helper
+  const hasPermission = (module, action) => {
+    if (!userPermissions?.permissions) return true; // Allow all if no permissions set
+    const modulePerms = userPermissions.permissions[module];
+    if (!modulePerms) return false;
+    return modulePerms[action] === true;
+  };
+
+  // Check if user can access a view
+  const canAccess = (viewId) => {
+    if (!userPermissions?.permissions) return true;
+    const moduleMap = {
+      'dashboard': 'dashboard',
+      'fees': 'fees',
+      'income': 'income',
+      'expenses': 'expenses',
+      'students': 'students',
+      'reports': 'reports',
+      'sms': 'sms',
+      'budgets': 'budgets',
+      'plans': 'plans',
+      'settings': 'settings'
+    };
+    const module = moduleMap[viewId];
+    if (!module) return true;
+    return hasPermission(module, 'view');
+  };
+
   const logAction = (action, type, details) => {
     const log = {
       id: Date.now(),
@@ -889,6 +1115,16 @@ const SchoolFinanceApp = () => {
     
     initializeApp();
   }, []);
+
+  // Dark mode effect
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    localStorage.setItem('qm_dark_mode', darkMode.toString());
+  }, [darkMode]);
 
   useEffect(() => {
     if (!isElectron && !loading) {
@@ -1185,14 +1421,40 @@ const SchoolFinanceApp = () => {
     return new Intl.NumberFormat('en-UG').format(amount) + ' UGX';
   };
 
+  // Dark mode helper classes
+  const cardClass = darkMode 
+    ? 'bg-gray-800 text-white' 
+    : 'bg-white text-gray-800';
+  
+  const inputClass = darkMode
+    ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400'
+    : 'bg-white border-gray-300 text-gray-800';
+  
+  const tableRowClass = darkMode
+    ? 'border-gray-700 hover:bg-gray-700'
+    : 'border-gray-100 hover:bg-gray-50';
 
-  const printReceipt = (entry) => {
+
+  const printReceipt = async (entry) => {
     const doc = new jsPDF({
       unit: 'mm',
-      format: [80, 200]
+      format: [80, 220]
     });
   
     let yPos = 10;
+    
+    // Generate QR Code for verification
+    const verifyUrl = `https://qm-financemanagement-production.up.railway.app/api/verify/${entry.receiptNo}`;
+    let qrDataUrl = null;
+    try {
+      qrDataUrl = await QRCode.toDataURL(verifyUrl, {
+        width: 200,
+        margin: 1,
+        color: { dark: '#1e40af', light: '#ffffff' }
+      });
+    } catch (err) {
+      console.error('QR generation error:', err);
+    }
   
     // School Logo
     if (schoolLogo) {
@@ -1406,6 +1668,29 @@ const SchoolFinanceApp = () => {
     doc.text(`Printed: ${timestamp}`, 40, yPos + 11, { align: 'center' });
     yPos += 15;
   
+    // QR Code Section
+    if (qrDataUrl) {
+      yPos += 3;
+      
+      // QR Code container
+      doc.setFillColor(240, 249, 255);
+      doc.roundedRect(8, yPos, 64, 35, 2, 2, 'F');
+      doc.setDrawColor(59, 130, 246);
+      doc.setLineWidth(0.3);
+      doc.roundedRect(8, yPos, 64, 35, 2, 2, 'S');
+      
+      // QR Code
+      doc.addImage(qrDataUrl, 'PNG', 25, yPos + 2, 30, 30);
+      
+      // Scan text
+      doc.setFontSize(6);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(30, 64, 175);
+      doc.text('SCAN TO VERIFY', 40, yPos + 33, { align: 'center' });
+      
+      yPos += 38;
+    }
+
     // Decorative barcode footer - smaller
     doc.setDrawColor(75, 85, 99);
     doc.setLineWidth(0.4);
@@ -1481,6 +1766,7 @@ const SchoolFinanceApp = () => {
         await loadCategoriesFromAPI();
         await loadIncomeFromAPI();
         await loadExpensesFromAPI();
+        await loadMyPermissions();
       } else {
         setLoginError(data.message || 'Invalid username or password');
       }
@@ -1765,9 +2051,9 @@ const SchoolFinanceApp = () => {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-md p-6">
+        <div className={`rounded-xl shadow-md p-6 ${cardClass}`}>
           <div className="flex justify-between items-center mb-4">
-            <h3 className="text-xl font-bold text-gray-800">Recent Transactions</h3>
+            <h3 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>Recent Transactions</h3>
             <button
               onClick={clearAllData}
               className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
@@ -3846,7 +4132,7 @@ const SchoolFinanceApp = () => {
         setIncomeEntries(prev => [newEntry, ...prev]);
         
         // Print receipt
-        printReceipt(newEntry);
+        await printReceipt(newEntry);
         
         // Refresh data with updated balance
         setStudentBalance(res.data.balance);
@@ -4958,6 +5244,1182 @@ const SchoolFinanceApp = () => {
     );
   };
 
+// Payment Plans Component
+  const PaymentPlansManagement = () => {
+    const [activeTab, setActiveTab] = useState('overview');
+    const [showCreatePlan, setShowCreatePlan] = useState(false);
+    const [showAssignPlan, setShowAssignPlan] = useState(false);
+    const [installmentFilter, setInstallmentFilter] = useState('');
+    const [selectedInstallment, setSelectedInstallment] = useState(null);
+    const [paymentAmount, setPaymentAmount] = useState('');
+    
+    const [newPlan, setNewPlan] = useState({
+      name: '',
+      totalAmount: '',
+      installments: 3
+    });
+
+    const [assignForm, setAssignForm] = useState({
+      studentId: '',
+      paymentPlanId: '',
+      customAmount: '',
+      dueDates: ['', '', '']
+    });
+    const [studentSearch, setStudentSearch] = useState('');
+    const [studentResults, setStudentResults] = useState([]);
+    const [selectedStudent, setSelectedStudent] = useState(null);
+
+    useEffect(() => {
+      loadPaymentPlans();
+      loadInstallments();
+      loadPlanSummary();
+    }, []);
+
+    useEffect(() => {
+      loadInstallments(installmentFilter ? `?${installmentFilter}=true` : '');
+    }, [installmentFilter]);
+
+    const searchStudents = async (query) => {
+      if (query.length < 2) { setStudentResults([]); return; }
+      const res = await api.get(`/students/search?q=${encodeURIComponent(query)}`);
+      if (res.success) setStudentResults(Array.isArray(res.data) ? res.data : []);
+    };
+
+    const handleCreatePlan = async () => {
+      if (!newPlan.name || !newPlan.totalAmount || !newPlan.installments) {
+        alert('Please fill all fields');
+        return;
+      }
+      const result = await createPaymentPlan(newPlan);
+      if (result) {
+        alert('Payment plan created!');
+        setShowCreatePlan(false);
+        setNewPlan({ name: '', totalAmount: '', installments: 3 });
+      }
+    };
+
+    const handleAssignPlan = async () => {
+      if (!selectedStudent || !assignForm.paymentPlanId) {
+        alert('Please select student and plan');
+        return;
+      }
+      
+      const validDates = assignForm.dueDates.filter(d => d);
+      if (validDates.length === 0) {
+        alert('Please set at least one due date');
+        return;
+      }
+
+      await assignPlanToStudent({
+        studentId: selectedStudent.id,
+        paymentPlanId: assignForm.paymentPlanId,
+        customAmount: assignForm.customAmount || null,
+        dueDates: validDates
+      });
+      
+      setShowAssignPlan(false);
+      setSelectedStudent(null);
+      setAssignForm({ studentId: '', paymentPlanId: '', customAmount: '', dueDates: ['', '', ''] });
+    };
+
+    const handleRecordPayment = async () => {
+      if (!paymentAmount || parseFloat(paymentAmount) <= 0) {
+        alert('Enter valid amount');
+        return;
+      }
+      const success = await recordInstallmentPayment(selectedInstallment.id, parseFloat(paymentAmount));
+      if (success) {
+        setSelectedInstallment(null);
+        setPaymentAmount('');
+      }
+    };
+
+    const getStatusBadge = (status) => {
+      const styles = {
+        pending: 'bg-yellow-100 text-yellow-700',
+        partial: 'bg-blue-100 text-blue-700',
+        paid: 'bg-green-100 text-green-700',
+        overdue: 'bg-red-100 text-red-700'
+      };
+      return styles[status] || 'bg-gray-100 text-gray-700';
+    };
+
+    const updatePlanInstallments = (count) => {
+      const newDates = Array(count).fill('');
+      setAssignForm({ ...assignForm, dueDates: newDates });
+    };
+
+    return (
+      <div className="space-y-6">
+        <div className="flex justify-between items-center">
+          <h2 className={`text-3xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>📋 Payment Plans</h2>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowCreatePlan(true)}
+              className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2"
+            >
+              <Plus className="w-5 h-5" />
+              Create Plan
+            </button>
+            <button
+              onClick={() => setShowAssignPlan(true)}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2"
+            >
+              <User className="w-5 h-5" />
+              Assign to Student
+            </button>
+          </div>
+        </div>
+
+        {planSummary && (
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+            <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl p-4 text-white shadow-lg">
+              <p className="text-sm opacity-80">Active Plans</p>
+              <p className="text-2xl font-bold">{planSummary.activePlans}</p>
+            </div>
+            <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 text-white shadow-lg">
+              <p className="text-sm opacity-80">Overdue</p>
+              <p className="text-2xl font-bold">{planSummary.overdueInstallments}</p>
+            </div>
+            <div className="bg-gradient-to-br from-yellow-500 to-yellow-600 rounded-xl p-4 text-white shadow-lg">
+              <p className="text-sm opacity-80">Due This Week</p>
+              <p className="text-2xl font-bold">{planSummary.upcomingInstallments}</p>
+            </div>
+            <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-4 text-white shadow-lg">
+              <p className="text-sm opacity-80">Total Expected</p>
+              <p className="text-xl font-bold">{formatCurrency(planSummary.totalExpected)}</p>
+            </div>
+            <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-4 text-white shadow-lg">
+              <p className="text-sm opacity-80">Total Collected</p>
+              <p className="text-xl font-bold">{formatCurrency(planSummary.totalCollected)}</p>
+            </div>
+          </div>
+        )}
+
+        <div className={`rounded-xl shadow-md ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+          <div className="flex border-b border-gray-200 dark:border-gray-700">
+            {[
+              { id: 'overview', label: '📊 All Installments' },
+              { id: 'overdue', label: '🚨 Overdue' },
+              { id: 'upcoming', label: '📅 Due Soon' },
+              { id: 'plans', label: '📋 Plan Templates' }
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => {
+                  setActiveTab(tab.id);
+                  if (tab.id === 'overdue') setInstallmentFilter('overdue');
+                  else if (tab.id === 'upcoming') setInstallmentFilter('upcoming');
+                  else if (tab.id === 'overview') setInstallmentFilter('');
+                }}
+                className={`flex-1 py-4 px-4 text-sm font-medium transition-colors ${
+                  activeTab === tab.id 
+                    ? darkMode ? 'bg-gray-700 text-blue-400 border-b-2 border-blue-400' : 'bg-blue-50 text-blue-600 border-b-2 border-blue-600'
+                    : darkMode ? 'text-gray-400 hover:bg-gray-700' : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {activeTab !== 'plans' && (
+            <div className="p-6">
+              {plansLoading ? (
+                <div className="text-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                </div>
+              ) : installments.length === 0 ? (
+                <div className="text-center py-12">
+                  <div className="text-6xl mb-4">📋</div>
+                  <p className={`${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>No installments found</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className={`border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                        <th className={`text-left py-3 px-4 text-sm font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Student</th>
+                        <th className={`text-left py-3 px-4 text-sm font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Plan</th>
+                        <th className={`text-center py-3 px-4 text-sm font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Inst #</th>
+                        <th className={`text-left py-3 px-4 text-sm font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Due Date</th>
+                        <th className={`text-right py-3 px-4 text-sm font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Amount</th>
+                        <th className={`text-right py-3 px-4 text-sm font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Paid</th>
+                        <th className={`text-center py-3 px-4 text-sm font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Status</th>
+                        <th className={`text-center py-3 px-4 text-sm font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {installments.map((inst) => (
+                        <tr key={inst.id} className={`border-b ${darkMode ? 'border-gray-700 hover:bg-gray-700' : 'border-gray-100 hover:bg-gray-50'}`}>
+                          <td className="py-3 px-4">
+                            <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>{inst.studentName}</p>
+                            <p className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{inst.className}</p>
+                          </td>
+                          <td className={`py-3 px-4 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>{inst.planName}</td>
+                          <td className="py-3 px-4 text-center">
+                            <span className="bg-purple-100 text-purple-700 px-2 py-1 rounded-full text-xs font-bold">
+                              #{inst.installmentNumber}
+                            </span>
+                          </td>
+                          <td className={`py-3 px-4 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                            {new Date(inst.dueDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                          </td>
+                          <td className={`py-3 px-4 text-sm text-right font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+                            {formatCurrency(inst.amount)}
+                          </td>
+                          <td className={`py-3 px-4 text-sm text-right font-medium ${inst.paidAmount > 0 ? 'text-green-600' : darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
+                            {formatCurrency(inst.paidAmount)}
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusBadge(inst.status)}`}>
+                              {inst.status.charAt(0).toUpperCase() + inst.status.slice(1)}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="flex items-center justify-center gap-2">
+                              {inst.status !== 'paid' && (
+                                <>
+                                  <button
+                                    onClick={() => setSelectedInstallment(inst)}
+                                    className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-medium hover:bg-green-200"
+                                  >
+                                    Pay
+                                  </button>
+                                  {inst.phone && !inst.reminderSent && (
+                                    <button
+                                      onClick={() => sendInstallmentReminder(inst.id)}
+                                      className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-medium hover:bg-blue-200"
+                                    >
+                                      📱 Remind
+                                    </button>
+                                  )}
+                                  {inst.reminderSent && (
+                                    <span className="text-xs text-gray-400">✓ Sent</span>
+                                  )}
+                                </>
+                              )}
+                              {inst.status === 'paid' && (
+                                <span className="text-green-600 text-xs">✓ Complete</span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'plans' && (
+            <div className="p-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {paymentPlans.map((plan) => (
+                  <div key={plan.id} className={`p-4 rounded-lg border-2 ${darkMode ? 'bg-gray-700 border-gray-600' : 'bg-gray-50 border-gray-200'}`}>
+                    <h4 className={`font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>{plan.name}</h4>
+                    <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                      {plan.installments} installments × {formatCurrency(parseFloat(plan.totalAmount) / plan.installments)}
+                    </p>
+                    <p className="text-lg font-bold text-blue-600 mt-2">{formatCurrency(parseFloat(plan.totalAmount))}</p>
+                  </div>
+                ))}
+                {paymentPlans.length === 0 && (
+                  <div className={`col-span-full text-center py-8 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                    No payment plan templates yet. Create one to get started!
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {showCreatePlan && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className={`rounded-xl shadow-xl p-6 max-w-md w-full mx-4 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+              <h3 className={`text-xl font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-800'}`}>Create Payment Plan Template</h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Plan Name</label>
+                  <input
+                    type="text"
+                    value={newPlan.name}
+                    onChange={(e) => setNewPlan({ ...newPlan, name: e.target.value })}
+                    placeholder="e.g., Term 1 2025 - 3 Installments"
+                    className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 focus:outline-none ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Total Amount (UGX)</label>
+                  <input
+                    type="number"
+                    value={newPlan.totalAmount}
+                    onChange={(e) => setNewPlan({ ...newPlan, totalAmount: e.target.value })}
+                    placeholder="e.g., 1500000"
+                    className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 focus:outline-none ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Number of Installments</label>
+                  <select
+                    value={newPlan.installments}
+                    onChange={(e) => setNewPlan({ ...newPlan, installments: parseInt(e.target.value) })}
+                    className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 focus:outline-none ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
+                  >
+                    {[2, 3, 4, 5, 6].map(n => (
+                      <option key={n} value={n}>{n} Installments</option>
+                    ))}
+                  </select>
+                </div>
+                
+                {newPlan.totalAmount && newPlan.installments && (
+                  <div className={`p-3 rounded-lg ${darkMode ? 'bg-purple-900/30' : 'bg-purple-50'}`}>
+                    <p className={`text-sm ${darkMode ? 'text-purple-300' : 'text-purple-700'}`}>
+                      Each installment: <span className="font-bold">{formatCurrency(parseFloat(newPlan.totalAmount) / newPlan.installments)}</span>
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <button onClick={handleCreatePlan} className="flex-1 bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded-lg font-medium">
+                  Create Plan
+                </button>
+                <button onClick={() => setShowCreatePlan(false)} className={`flex-1 px-6 py-2 rounded-lg font-medium ${darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-300 text-gray-800'}`}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showAssignPlan && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className={`rounded-xl shadow-xl p-6 max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+              <h3 className={`text-xl font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-800'}`}>Assign Payment Plan to Student</h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Search Student</label>
+                  <input
+                    type="text"
+                    value={studentSearch}
+                    onChange={(e) => { setStudentSearch(e.target.value); searchStudents(e.target.value); }}
+                    placeholder="Type student name..."
+                    className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
+                  />
+                  {studentResults.length > 0 && (
+                    <div className={`mt-1 border rounded-lg max-h-40 overflow-y-auto ${darkMode ? 'bg-gray-700 border-gray-600' : 'bg-white border-gray-300'}`}>
+                      {studentResults.map(s => (
+                        <div
+                          key={s.id}
+                          onClick={() => { setSelectedStudent(s); setStudentSearch(`${s.firstName} ${s.lastName}`); setStudentResults([]); }}
+                          className={`px-4 py-2 cursor-pointer ${darkMode ? 'hover:bg-gray-600' : 'hover:bg-blue-50'}`}
+                        >
+                          <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>{s.firstName} {s.lastName}</p>
+                          <p className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{s.studentNumber}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {selectedStudent && (
+                  <div className={`p-3 rounded-lg ${darkMode ? 'bg-blue-900/30 border-blue-700' : 'bg-blue-50 border-blue-200'} border`}>
+                    <p className={`font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>{selectedStudent.firstName} {selectedStudent.lastName}</p>
+                    <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>{selectedStudent.studentNumber}</p>
+                  </div>
+                )}
+
+                <div>
+                  <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Select Payment Plan</label>
+                  <select
+                    value={assignForm.paymentPlanId}
+                    onChange={(e) => {
+                      const plan = paymentPlans.find(p => p.id === e.target.value);
+                      setAssignForm({ ...assignForm, paymentPlanId: e.target.value });
+                      if (plan) updatePlanInstallments(plan.installments);
+                    }}
+                    className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
+                  >
+                    <option value="">Select a plan...</option>
+                    {paymentPlans.map(p => (
+                      <option key={p.id} value={p.id}>{p.name} - {formatCurrency(parseFloat(p.totalAmount))}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Custom Amount (Optional)</label>
+                  <input
+                    type="number"
+                    value={assignForm.customAmount}
+                    onChange={(e) => setAssignForm({ ...assignForm, customAmount: e.target.value })}
+                    placeholder="Leave empty to use plan default"
+                    className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
+                  />
+                </div>
+
+                {assignForm.dueDates.length > 0 && (
+                  <div>
+                    <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Set Due Dates</label>
+                    <div className="space-y-2">
+                      {assignForm.dueDates.map((date, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <span className={`w-24 text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>Installment {idx + 1}:</span>
+                          <input
+                            type="date"
+                            value={date}
+                            onChange={(e) => {
+                              const newDates = [...assignForm.dueDates];
+                              newDates[idx] = e.target.value;
+                              setAssignForm({ ...assignForm, dueDates: newDates });
+                            }}
+                            className={`flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <button onClick={handleAssignPlan} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium">
+                  Assign Plan
+                </button>
+                <button onClick={() => { setShowAssignPlan(false); setSelectedStudent(null); }} className={`flex-1 px-6 py-2 rounded-lg font-medium ${darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-300 text-gray-800'}`}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {selectedInstallment && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className={`rounded-xl shadow-xl p-6 max-w-md w-full mx-4 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+              <h3 className={`text-xl font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-800'}`}>Record Installment Payment</h3>
+              
+              <div className={`p-4 rounded-lg mb-4 ${darkMode ? 'bg-gray-700' : 'bg-gray-50'}`}>
+                <p className={`font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>{selectedInstallment.studentName}</p>
+                <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                  Installment #{selectedInstallment.installmentNumber} - {selectedInstallment.planName}
+                </p>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                  <div>
+                    <span className={darkMode ? 'text-gray-400' : 'text-gray-500'}>Amount Due:</span>
+                    <span className={`ml-2 font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>{formatCurrency(selectedInstallment.amount)}</span>
+                  </div>
+                  <div>
+                    <span className={darkMode ? 'text-gray-400' : 'text-gray-500'}>Already Paid:</span>
+                    <span className="ml-2 font-bold text-green-600">{formatCurrency(selectedInstallment.paidAmount)}</span>
+                  </div>
+                  <div className="col-span-2">
+                    <span className={darkMode ? 'text-gray-400' : 'text-gray-500'}>Remaining:</span>
+                    <span className="ml-2 font-bold text-red-600">{formatCurrency(selectedInstallment.amount - selectedInstallment.paidAmount)}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Payment Amount (UGX)</label>
+                <input
+                  type="number"
+                  value={paymentAmount}
+                  onChange={(e) => setPaymentAmount(e.target.value)}
+                  placeholder="Enter amount"
+                  className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-green-500 focus:outline-none text-xl font-bold ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
+                />
+                <div className="flex gap-2 mt-2">
+                  <button
+                    onClick={() => setPaymentAmount((selectedInstallment.amount - selectedInstallment.paidAmount).toString())}
+                    className="px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200"
+                  >
+                    Full ({formatCurrency(selectedInstallment.amount - selectedInstallment.paidAmount)})
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <button onClick={handleRecordPayment} className="flex-1 bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg font-bold">
+                  Record Payment
+                </button>
+                <button onClick={() => { setSelectedInstallment(null); setPaymentAmount(''); }} className={`flex-1 px-6 py-2 rounded-lg font-medium ${darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-300 text-gray-800'}`}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+// User & Role Management Component
+  const UserManagement = () => {
+    const [activeTab, setActiveTab] = useState('users');
+    const [showAssignRole, setShowAssignRole] = useState(null);
+    const [selectedRoleId, setSelectedRoleId] = useState('');
+    const [editingRole, setEditingRole] = useState(null);
+
+    useEffect(() => {
+      loadRoles();
+      loadUsersWithRoles();
+    }, []);
+
+    const handleAssignRole = async () => {
+      if (!selectedRoleId) {
+        alert('Please select a role');
+        return;
+      }
+      await assignRole(showAssignRole.id, selectedRoleId);
+      setShowAssignRole(null);
+      setSelectedRoleId('');
+    };
+
+    const getRoleBadgeColor = (roleName) => {
+      const colors = {
+        admin: 'bg-red-100 text-red-700',
+        bursar: 'bg-blue-100 text-blue-700',
+        director: 'bg-purple-100 text-purple-700',
+        accountant: 'bg-green-100 text-green-700',
+        viewer: 'bg-gray-100 text-gray-700'
+      };
+      return colors[roleName] || 'bg-gray-100 text-gray-700';
+    };
+
+    const permissionModules = [
+      { key: 'dashboard', label: 'Dashboard' },
+      { key: 'income', label: 'Income' },
+      { key: 'expenses', label: 'Expenses' },
+      { key: 'fees', label: 'School Fees' },
+      { key: 'students', label: 'Students' },
+      { key: 'reports', label: 'Reports' },
+      { key: 'sms', label: 'SMS' },
+      { key: 'budgets', label: 'Budgets' },
+      { key: 'plans', label: 'Payment Plans' },
+      { key: 'settings', label: 'Settings' },
+      { key: 'users', label: 'Users' }
+    ];
+
+    const permissionActions = ['view', 'create', 'edit', 'delete'];
+
+    return (
+      <div className="space-y-6">
+        <div className="flex justify-between items-center">
+          <h2 className={`text-3xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>👥 User & Role Management</h2>
+          <button
+            onClick={initializeRoles}
+            className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-medium"
+          >
+            Initialize Default Roles
+          </button>
+        </div>
+
+        {/* Current User Info */}
+        {userPermissions && (
+          <div className={`p-4 rounded-xl ${darkMode ? 'bg-blue-900/30 border-blue-700' : 'bg-blue-50 border-blue-200'} border`}>
+            <p className={`text-sm ${darkMode ? 'text-blue-300' : 'text-blue-700'}`}>
+              You are logged in as: <span className="font-bold">{user.name}</span> | 
+              Role: <span className={`ml-1 px-2 py-0.5 rounded-full text-xs font-medium ${getRoleBadgeColor(userPermissions.role)}`}>
+                {userPermissions.role?.toUpperCase()}
+              </span>
+            </p>
+          </div>
+        )}
+
+        {/* Tabs */}
+        <div className={`rounded-xl shadow-md ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+          <div className="flex border-b border-gray-200 dark:border-gray-700">
+            {[
+              { id: 'users', label: '👥 Users' },
+              { id: 'roles', label: '🔐 Roles & Permissions' }
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex-1 py-4 px-4 text-sm font-medium transition-colors ${
+                  activeTab === tab.id 
+                    ? darkMode ? 'bg-gray-700 text-blue-400 border-b-2 border-blue-400' : 'bg-blue-50 text-blue-600 border-b-2 border-blue-600'
+                    : darkMode ? 'text-gray-400 hover:bg-gray-700' : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Users Tab */}
+          {activeTab === 'users' && (
+            <div className="p-6">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className={`border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                      <th className={`text-left py-3 px-4 text-sm font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>User</th>
+                      <th className={`text-left py-3 px-4 text-sm font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Username</th>
+                      <th className={`text-left py-3 px-4 text-sm font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Role</th>
+                      <th className={`text-left py-3 px-4 text-sm font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Status</th>
+                      <th className={`text-left py-3 px-4 text-sm font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Last Login</th>
+                      <th className={`text-center py-3 px-4 text-sm font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usersWithRoles.length === 0 ? (
+                      <tr>
+                        <td colSpan="6" className={`text-center py-8 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                          No users found
+                        </td>
+                      </tr>
+                    ) : (
+                      usersWithRoles.map((u) => (
+                        <tr key={u.id} className={`border-b ${darkMode ? 'border-gray-700 hover:bg-gray-700' : 'border-gray-100 hover:bg-gray-50'}`}>
+                          <td className="py-3 px-4">
+                            <p className={`font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>{u.fullName}</p>
+                            <p className={`text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>{u.email || 'No email'}</p>
+                          </td>
+                          <td className={`py-3 px-4 text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>{u.username}</td>
+                          <td className="py-3 px-4">
+                            {u.role ? (
+                              <span className={`px-3 py-1 rounded-full text-xs font-medium ${getRoleBadgeColor(u.role.name)}`}>
+                                {u.role.name.toUpperCase()}
+                              </span>
+                            ) : (
+                              <span className="px-3 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">
+                                NO ROLE
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${u.isActive ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                              {u.isActive ? 'Active' : 'Inactive'}
+                            </span>
+                          </td>
+                          <td className={`py-3 px-4 text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                            {u.lastLogin ? new Date(u.lastLogin).toLocaleDateString() : 'Never'}
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <button
+                              onClick={() => { setShowAssignRole(u); setSelectedRoleId(u.role?.id || ''); }}
+                              className="bg-blue-100 text-blue-700 px-3 py-1 rounded text-xs font-medium hover:bg-blue-200"
+                            >
+                              Assign Role
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Roles Tab */}
+          {activeTab === 'roles' && (
+            <div className="p-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {roles.map((role) => (
+                  <div key={role.id} className={`p-4 rounded-lg border-2 ${darkMode ? 'bg-gray-700 border-gray-600' : 'bg-gray-50 border-gray-200'}`}>
+                    <div className="flex justify-between items-start mb-3">
+                      <div>
+                        <span className={`px-3 py-1 rounded-full text-sm font-bold ${getRoleBadgeColor(role.name)}`}>
+                          {role.name.toUpperCase()}
+                        </span>
+                        <p className={`text-sm mt-2 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                          {role.description || 'No description'}
+                        </p>
+                      </div>
+                      <span className={`text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
+                        {role._count?.users || 0} users
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setEditingRole(role)}
+                      className={`w-full mt-2 px-3 py-2 rounded text-sm font-medium ${darkMode ? 'bg-gray-600 text-gray-200 hover:bg-gray-500' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                    >
+                      Edit Permissions
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Assign Role Modal */}
+        {showAssignRole && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className={`rounded-xl shadow-xl p-6 max-w-md w-full mx-4 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+              <h3 className={`text-xl font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+                Assign Role to {showAssignRole.fullName}
+              </h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Select Role</label>
+                  <select
+                    value={selectedRoleId}
+                    onChange={(e) => setSelectedRoleId(e.target.value)}
+                    className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
+                  >
+                    <option value="">Select a role...</option>
+                    {roles.map(r => (
+                      <option key={r.id} value={r.id}>{r.name.toUpperCase()} - {r.description}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <button onClick={handleAssignRole} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium">
+                  Assign Role
+                </button>
+                <button onClick={() => setShowAssignRole(null)} className={`flex-1 px-6 py-2 rounded-lg font-medium ${darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-300 text-gray-800'}`}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Edit Permissions Modal */}
+        {editingRole && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className={`rounded-xl shadow-xl p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+              <h3 className={`text-xl font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+                Edit Permissions: <span className={`${getRoleBadgeColor(editingRole.name)} px-2 py-1 rounded`}>{editingRole.name.toUpperCase()}</span>
+              </h3>
+              
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className={`border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+                      <th className={`text-left py-2 px-3 text-sm font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Module</th>
+                      {permissionActions.map(action => (
+                        <th key={action} className={`text-center py-2 px-3 text-sm font-semibold ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                          {action.charAt(0).toUpperCase() + action.slice(1)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {permissionModules.map(module => (
+                      <tr key={module.key} className={`border-b ${darkMode ? 'border-gray-700' : 'border-gray-100'}`}>
+                        <td className={`py-2 px-3 font-medium ${darkMode ? 'text-white' : 'text-gray-800'}`}>{module.label}</td>
+                        {permissionActions.map(action => (
+                          <td key={action} className="py-2 px-3 text-center">
+                            <input
+                              type="checkbox"
+                              checked={editingRole.permissions?.[module.key]?.[action] || false}
+                              onChange={(e) => {
+                                const newPerms = { ...editingRole.permissions };
+                                if (!newPerms[module.key]) newPerms[module.key] = {};
+                                newPerms[module.key][action] = e.target.checked;
+                                setEditingRole({ ...editingRole, permissions: newPerms });
+                              }}
+                              className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <button 
+                  onClick={() => {
+                    updateRolePermissions(editingRole.id, editingRole.permissions);
+                    setEditingRole(null);
+                  }} 
+                  className="flex-1 bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-medium"
+                >
+                  Save Permissions
+                </button>
+                <button onClick={() => setEditingRole(null)} className={`flex-1 px-6 py-2 rounded-lg font-medium ${darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-300 text-gray-800'}`}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+
+  // Budget Management Component
+  const BudgetManagement = () => {
+    const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+    const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
+    const [selectedPeriod, setSelectedPeriod] = useState('monthly');
+    const [showSetBudgets, setShowSetBudgets] = useState(false);
+    const [budgetInputs, setBudgetInputs] = useState({});
+    const [savingBudgets, setSavingBudgets] = useState(false);
+
+    const months = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+
+    useEffect(() => {
+      loadBudgets(selectedYear, selectedMonth, selectedPeriod);
+      loadBudgetSummary(selectedYear, selectedMonth);
+    }, [selectedYear, selectedMonth, selectedPeriod]);
+
+    const initializeBudgetInputs = () => {
+      const inputs = {};
+      expenseCategories.forEach(cat => {
+        const existing = budgets.find(b => b.category === cat);
+        inputs[cat] = existing ? existing.amount.toString() : '';
+      });
+      setBudgetInputs(inputs);
+      setShowSetBudgets(true);
+    };
+
+    const handleSaveBulkBudgets = async () => {
+      setSavingBudgets(true);
+      const budgetsToSave = Object.entries(budgetInputs)
+        .filter(([_, amount]) => amount && parseFloat(amount) > 0)
+        .map(([category, amount]) => ({ category, amount: parseFloat(amount) }));
+      
+      await saveBulkBudgets(budgetsToSave, selectedPeriod, selectedYear, selectedMonth);
+      setSavingBudgets(false);
+      setShowSetBudgets(false);
+    };
+
+    const getStatusColor = (status) => {
+      switch (status) {
+        case 'exceeded': return 'bg-red-500';
+        case 'warning': return 'bg-yellow-500';
+        default: return 'bg-green-500';
+      }
+    };
+
+    const getStatusBg = (status) => {
+      switch (status) {
+        case 'exceeded': return darkMode ? 'bg-red-900/30 border-red-700' : 'bg-red-50 border-red-200';
+        case 'warning': return darkMode ? 'bg-yellow-900/30 border-yellow-700' : 'bg-yellow-50 border-yellow-200';
+        default: return darkMode ? 'bg-green-900/30 border-green-700' : 'bg-green-50 border-green-200';
+      }
+    };
+
+    return (
+      <div className="space-y-6">
+        <div className="flex justify-between items-center">
+          <h2 className={`text-3xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>💰 Budget Tracking</h2>
+          <button
+            onClick={initializeBudgetInputs}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium flex items-center gap-2"
+          >
+            <Plus className="w-5 h-5" />
+            Set Budgets
+          </button>
+        </div>
+
+        {/* Period Selector */}
+        <div className={`rounded-xl shadow-md p-4 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+          <div className="flex flex-wrap items-center gap-4">
+            <div>
+              <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Period Type</label>
+              <select
+                value={selectedPeriod}
+                onChange={(e) => setSelectedPeriod(e.target.value)}
+                className={`px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
+              >
+                <option value="monthly">Monthly</option>
+                <option value="yearly">Yearly</option>
+              </select>
+            </div>
+            
+            <div>
+              <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Year</label>
+              <select
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+                className={`px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
+              >
+                {[2024, 2025, 2026, 2027].map(y => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
+
+            {selectedPeriod === 'monthly' && (
+              <div>
+                <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>Month</label>
+                <select
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
+                  className={`px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
+                >
+                  {months.map((m, i) => (
+                    <option key={i} value={i + 1}>{m}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Budget Summary Cards */}
+        {budgetSummary && (
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className={`rounded-xl p-6 shadow-lg ${darkMode ? 'bg-gradient-to-br from-blue-600 to-blue-700' : 'bg-gradient-to-br from-blue-500 to-blue-600'} text-white`}>
+              <p className="text-sm opacity-80">Total Budget</p>
+              <p className="text-2xl font-bold">{formatCurrency(budgetSummary.totalBudget)}</p>
+              <p className="text-xs opacity-70 mt-1">{selectedPeriod === 'monthly' ? months[selectedMonth - 1] : 'Full Year'} {selectedYear}</p>
+            </div>
+            
+            <div className={`rounded-xl p-6 shadow-lg ${darkMode ? 'bg-gradient-to-br from-red-600 to-red-700' : 'bg-gradient-to-br from-red-500 to-red-600'} text-white`}>
+              <p className="text-sm opacity-80">Total Spent</p>
+              <p className="text-2xl font-bold">{formatCurrency(budgetSummary.totalSpent)}</p>
+              <p className="text-xs opacity-70 mt-1">{budgetSummary.percentage}% of budget</p>
+            </div>
+            
+            <div className={`rounded-xl p-6 shadow-lg ${
+              budgetSummary.remaining >= 0 
+                ? (darkMode ? 'bg-gradient-to-br from-green-600 to-green-700' : 'bg-gradient-to-br from-green-500 to-green-600')
+                : (darkMode ? 'bg-gradient-to-br from-orange-600 to-orange-700' : 'bg-gradient-to-br from-orange-500 to-orange-600')
+            } text-white`}>
+              <p className="text-sm opacity-80">{budgetSummary.remaining >= 0 ? 'Remaining' : 'Over Budget'}</p>
+              <p className="text-2xl font-bold">{formatCurrency(Math.abs(budgetSummary.remaining))}</p>
+              <p className="text-xs opacity-70 mt-1">{budgetSummary.remaining >= 0 ? 'Available to spend' : 'Exceeded!'}</p>
+            </div>
+            
+            <div className={`rounded-xl p-6 shadow-lg ${
+              budgetSummary.overBudgetCount === 0
+                ? (darkMode ? 'bg-gradient-to-br from-purple-600 to-purple-700' : 'bg-gradient-to-br from-purple-500 to-purple-600')
+                : (darkMode ? 'bg-gradient-to-br from-red-700 to-red-800' : 'bg-gradient-to-br from-red-600 to-red-700')
+            } text-white`}>
+              <p className="text-sm opacity-80">Categories Over Budget</p>
+              <p className="text-2xl font-bold">{budgetSummary.overBudgetCount}</p>
+              <p className="text-xs opacity-70 mt-1">{budgetSummary.overBudgetCount === 0 ? 'All good! ✓' : 'Need attention!'}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Overall Progress Bar */}
+        {budgetSummary && budgetSummary.totalBudget > 0 && (
+          <div className={`rounded-xl shadow-md p-6 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+            <div className="flex justify-between items-center mb-2">
+              <h3 className={`text-lg font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>Overall Budget Usage</h3>
+              <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                budgetSummary.status === 'exceeded' ? 'bg-red-100 text-red-700' :
+                budgetSummary.status === 'warning' ? 'bg-yellow-100 text-yellow-700' :
+                'bg-green-100 text-green-700'
+              }`}>
+                {budgetSummary.status === 'exceeded' ? '🚨 Over Budget' :
+                 budgetSummary.status === 'warning' ? '⚠️ Warning' : '✅ On Track'}
+              </span>
+            </div>
+            <div className={`w-full h-6 rounded-full ${darkMode ? 'bg-gray-700' : 'bg-gray-200'}`}>
+              <div
+                className={`h-6 rounded-full transition-all duration-500 ${getStatusColor(budgetSummary.status)} flex items-center justify-end pr-2`}
+                style={{ width: `${Math.min(budgetSummary.percentage, 100)}%` }}
+              >
+                {budgetSummary.percentage >= 20 && (
+                  <span className="text-white text-sm font-bold">{budgetSummary.percentage}%</span>
+                )}
+              </div>
+            </div>
+            <div className="flex justify-between mt-2">
+              <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                Spent: {formatCurrency(budgetSummary.totalSpent)}
+              </span>
+              <span className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                Budget: {formatCurrency(budgetSummary.totalBudget)}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Budget by Category */}
+        <div className={`rounded-xl shadow-md p-6 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+          <h3 className={`text-xl font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-800'}`}>Budget by Category</h3>
+          
+          {budgetLoading ? (
+            <div className="text-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+              <p className={`mt-2 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>Loading budgets...</p>
+            </div>
+          ) : budgets.length === 0 ? (
+            <div className="text-center py-12">
+              <div className="text-6xl mb-4">📊</div>
+              <p className={`text-lg ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>No budgets set for this period</p>
+              <p className={`text-sm ${darkMode ? 'text-gray-500' : 'text-gray-400'} mt-1`}>Click "Set Budgets" to create your first budget</p>
+              <button
+                onClick={initializeBudgetInputs}
+                className="mt-4 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium"
+              >
+                Set Budgets Now
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {budgets.map((budget) => (
+                <div
+                  key={budget.id}
+                  className={`p-4 rounded-lg border-2 ${getStatusBg(budget.status)}`}
+                >
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <h4 className={`font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>{budget.category}</h4>
+                      <p className={`text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                        {formatCurrency(budget.spent)} of {formatCurrency(budget.amount)}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <span className={`text-lg font-bold ${
+                        budget.status === 'exceeded' ? 'text-red-600' :
+                        budget.status === 'warning' ? 'text-yellow-600' :
+                        'text-green-600'
+                      }`}>
+                        {budget.percentage}%
+                      </span>
+                      <p className={`text-sm ${
+                        budget.remaining >= 0 
+                          ? (darkMode ? 'text-green-400' : 'text-green-600')
+                          : (darkMode ? 'text-red-400' : 'text-red-600')
+                      }`}>
+                        {budget.remaining >= 0 
+                          ? `${formatCurrency(budget.remaining)} left`
+                          : `${formatCurrency(Math.abs(budget.remaining))} over`
+                        }
+                      </p>
+                    </div>
+                  </div>
+                  <div className={`w-full h-3 rounded-full ${darkMode ? 'bg-gray-700' : 'bg-gray-200'}`}>
+                    <div
+                      className={`h-3 rounded-full transition-all duration-500 ${getStatusColor(budget.status)}`}
+                      style={{ width: `${Math.min(budget.percentage, 100)}%` }}
+                    ></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Over Budget Alerts */}
+        {budgetSummary && budgetSummary.overBudgetCategories?.length > 0 && (
+          <div className={`rounded-xl shadow-md p-6 border-2 ${darkMode ? 'bg-red-900/20 border-red-700' : 'bg-red-50 border-red-200'}`}>
+            <h3 className={`text-xl font-bold mb-4 flex items-center gap-2 ${darkMode ? 'text-red-400' : 'text-red-700'}`}>
+              🚨 Over Budget Alerts
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {budgetSummary.overBudgetCategories.map((item, idx) => (
+                <div key={idx} className={`p-4 rounded-lg ${darkMode ? 'bg-red-900/30' : 'bg-red-100'}`}>
+                  <p className={`font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>{item.category}</p>
+                  <p className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+                    Budget: {formatCurrency(item.budget)} | Spent: {formatCurrency(item.spent)}
+                  </p>
+                  <p className="text-red-600 font-bold">
+                    Over by: {formatCurrency(item.over)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Set Budgets Modal */}
+        {showSetBudgets && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className={`rounded-xl shadow-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+              <div className="flex justify-between items-center mb-6">
+                <h3 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+                  💰 Set {selectedPeriod === 'monthly' ? months[selectedMonth - 1] : 'Yearly'} {selectedYear} Budgets
+                </h3>
+                <button onClick={() => setShowSetBudgets(false)} className={`${darkMode ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-gray-700'}`}>
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <p className={`mb-4 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+                Set budget amounts for each expense category. Leave empty to skip a category.
+              </p>
+
+              <div className="space-y-4">
+                {expenseCategories.map((category) => (
+                  <div key={category} className="flex items-center gap-4">
+                    <label className={`w-48 font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>{category}</label>
+                    <div className="flex-1 relative">
+                      <input
+                        type="number"
+                        value={budgetInputs[category] || ''}
+                        onChange={(e) => setBudgetInputs({ ...budgetInputs, [category]: e.target.value })}
+                        placeholder="Enter budget amount"
+                        className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none ${darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' : 'bg-white border-gray-300'}`}
+                      />
+                      <span className={`absolute right-3 top-1/2 transform -translate-y-1/2 text-sm ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>UGX</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Quick Set Buttons */}
+              <div className="mt-6 p-4 rounded-lg bg-blue-50 dark:bg-blue-900/20">
+                <p className={`text-sm font-medium mb-2 ${darkMode ? 'text-blue-300' : 'text-blue-700'}`}>Quick Set All Categories:</p>
+                <div className="flex flex-wrap gap-2">
+                  {[100000, 200000, 500000, 1000000].map(amount => (
+                    <button
+                      key={amount}
+                      onClick={() => {
+                        const newInputs = {};
+                        expenseCategories.forEach(cat => newInputs[cat] = amount.toString());
+                        setBudgetInputs(newInputs);
+                      }}
+                      className={`px-3 py-1 rounded-lg text-sm font-medium ${darkMode ? 'bg-blue-800 text-blue-200 hover:bg-blue-700' : 'bg-blue-100 text-blue-700 hover:bg-blue-200'}`}
+                    >
+                      {formatCurrency(amount)}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => setBudgetInputs({})}
+                    className={`px-3 py-1 rounded-lg text-sm font-medium ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                  >
+                    Clear All
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={handleSaveBulkBudgets}
+                  disabled={savingBudgets}
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {savingBudgets ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <DollarSign className="w-5 h-5" />
+                      Save Budgets
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={() => setShowSetBudgets(false)}
+                  className={`flex-1 px-6 py-3 rounded-lg font-medium ${darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-200' : 'bg-gray-300 hover:bg-gray-400 text-gray-800'}`}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
   // Settings Component
   const Settings = () => {
     const [localSchoolName, setLocalSchoolName] = useState('QUEEN MOTHER JUNIOR SCHOOL');
@@ -5508,7 +6970,7 @@ const SchoolFinanceApp = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className={`min-h-screen transition-colors duration-300 ${darkMode ? 'bg-gray-900' : 'bg-gray-100'}`}>
       <header className="bg-gradient-to-r from-blue-600 to-blue-800 text-white shadow-lg print:hidden">
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
@@ -5531,6 +6993,13 @@ const SchoolFinanceApp = () => {
                 <p className="text-xs text-blue-100">{user.role}</p>
               </div>
               <button 
+                onClick={() => setDarkMode(!darkMode)}
+                className="bg-blue-700 hover:bg-blue-800 p-2 rounded-lg"
+                title={darkMode ? 'Light Mode' : 'Dark Mode'}
+              >
+                {darkMode ? '☀️' : '🌙'}
+              </button>
+              <button 
                 onClick={handleLogout}
                 className="bg-blue-700 hover:bg-blue-800 px-4 py-2 rounded-lg flex items-center gap-2"
               >
@@ -5542,25 +7011,33 @@ const SchoolFinanceApp = () => {
         </div>
       </header>
 
-      <nav className="bg-white shadow-md print:hidden">
-  <div className="max-w-7xl mx-auto px-6">
-    <div className="flex gap-1">
+      <nav className={`shadow-md print:hidden transition-colors duration-300 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+  <div className="max-w-7xl mx-auto px-4">
+    <div className="flex gap-0 overflow-x-auto">
      {[
-        { id: 'dashboard', label: 'Dashboard', icon: <BarChart3 className="w-5 h-5" /> },
-        { id: 'fees', label: 'School Fees', icon: <Receipt className="w-5 h-5" /> },
-        { id: 'income', label: 'Other Income', icon: <TrendingUp className="w-5 h-5" /> },
-        { id: 'expenses', label: 'Expenses', icon: <DollarSign className="w-5 h-5" /> },
-        { id: 'students', label: 'Students', icon: <User className="w-5 h-5" /> },
-        { id: 'reports', label: 'Reports', icon: <FileText className="w-5 h-5" /> },
-        { id: 'sms', label: 'SMS Center', icon: <MessageSquare className="w-5 h-5" /> },
-        { id: 'settings', label: 'Settings', icon: <SettingsIcon className="w-5 h-5" /> }
-      ].map(item => (        <button
+        { id: 'dashboard', label: 'Dashboard', icon: <BarChart3 className="w-4 h-4" /> },
+        { id: 'fees', label: 'Fees', icon: <Receipt className="w-4 h-4" /> },
+        { id: 'income', label: 'Income', icon: <TrendingUp className="w-4 h-4" /> },
+        { id: 'expenses', label: 'Expenses', icon: <DollarSign className="w-4 h-4" /> },
+        { id: 'students', label: 'Students', icon: <User className="w-4 h-4" /> },
+        { id: 'reports', label: 'Reports', icon: <FileText className="w-4 h-4" /> },
+        { id: 'sms', label: 'SMS', icon: <MessageSquare className="w-4 h-4" /> },
+        { id: 'budgets', label: 'Budgets', icon: <DollarSign className="w-4 h-4" /> },
+        { id: 'plans', label: 'Plans', icon: <Calendar className="w-4 h-4" /> },
+        { id: 'users', label: 'Users', icon: <Shield className="w-4 h-4" />, requiresAdmin: true },
+        { id: 'settings', label: 'Settings', icon: <SettingsIcon className="w-4 h-4" /> }
+      ].filter(item => !item.requiresAdmin || hasPermission('users', 'view')).map(item => (
+        <button
           key={item.id}
           onClick={() => setCurrentView(item.id)}
-          className={`flex items-center gap-2 px-6 py-4 font-medium transition-colors ${
+          className={`flex items-center gap-1 px-3 py-3 text-xs font-medium transition-colors whitespace-nowrap ${
             currentView === item.id
-              ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50'
-              : 'text-gray-600 hover:text-blue-600 hover:bg-gray-50'
+              ? darkMode 
+                ? 'text-blue-400 border-b-2 border-blue-400 bg-gray-700'
+                : 'text-blue-600 border-b-2 border-blue-600 bg-blue-50'
+              : darkMode
+                ? 'text-gray-300 hover:text-blue-400 hover:bg-gray-700'
+                : 'text-gray-600 hover:text-blue-600 hover:bg-gray-50'
           }`}
         >
           {item.icon}
@@ -5578,6 +7055,9 @@ const SchoolFinanceApp = () => {
   {currentView === 'expenses' && <ExpenseManagement />}
   {currentView === 'students' && <StudentsManagement />}
   {currentView === 'reports' && <Reports />}
+  {currentView === 'budgets' && <BudgetManagement />}
+  {currentView === 'plans' && <PaymentPlansManagement />}
+  {currentView === 'users' && <UserManagement />}
   {currentView === 'sms' && <SMSCenter 
   smsStats={smsStats} smsHistory={smsHistory} defaulters={defaulters}
   selectedDefaulters={selectedDefaulters} defaultersLoading={defaultersLoading}
