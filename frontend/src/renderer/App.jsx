@@ -836,22 +836,45 @@ const SchoolFinanceApp = () => {
   };
 
   // ==================== BUDGET FUNCTIONS ====================
-  const loadBudgets = async (year, month, period = 'monthly') => {
-    setBudgetLoading(true);
-    const params = new URLSearchParams({ year, period });
-    if (period === 'monthly') params.append('month', month);
+  const budgetsLoadingRef = useRef(false);
+  const budgetsLoadedRef = useRef(false);
+  const budgetSummaryLoadingRef = useRef(false);
+  const budgetSummaryLoadedRef = useRef(false);
+
+  const loadBudgets = async (year, month, period = 'monthly', force = false) => {
+    if (budgetsLoadedRef.current && !force) return;
+    if (budgetsLoadingRef.current) return;
     
-    const res = await api.get(`/budgets?${params.toString()}`);
-    if (res.success) {
-      setBudgets(res.data || []);
+    budgetsLoadingRef.current = true;
+    setBudgetLoading(true);
+    try {
+      const params = new URLSearchParams({ year, period });
+      if (period === 'monthly') params.append('month', month);
+      
+      const res = await api.get(`/budgets?${params.toString()}`);
+      if (res.success) {
+        setBudgets(res.data || []);
+        budgetsLoadedRef.current = true;
+      }
+    } finally {
+      setBudgetLoading(false);
+      budgetsLoadingRef.current = false;
     }
-    setBudgetLoading(false);
   };
 
-  const loadBudgetSummary = async (year, month) => {
-    const res = await api.get(`/budgets/summary?year=${year}&month=${month}`);
-    if (res.success) {
-      setBudgetSummary(res.data);
+  const loadBudgetSummary = async (year, month, force = false) => {
+    if (budgetSummaryLoadedRef.current && !force) return;
+    if (budgetSummaryLoadingRef.current) return;
+    
+    budgetSummaryLoadingRef.current = true;
+    try {
+      const res = await api.get(`/budgets/summary?year=${year}&month=${month}`);
+      if (res.success) {
+        setBudgetSummary(res.data);
+        budgetSummaryLoadedRef.current = true;
+      }
+    } finally {
+      budgetSummaryLoadingRef.current = false;
     }
   };
 
@@ -892,19 +915,42 @@ const SchoolFinanceApp = () => {
   };
 
   // ==================== PAYMENT PLAN FUNCTIONS ====================
-  const loadPaymentPlans = async () => {
+  const plansLoadedRef = useRef(false);
+  
+  const loadPaymentPlans = async (force = false) => {
+    if (plansLoadedRef.current && !force) return;
     const res = await api.get('/payment-plans');
-    if (res.success) setPaymentPlans(res.data || []);
+    if (res.success) {
+      setPaymentPlans(res.data || []);
+      plansLoadedRef.current = true;
+    }
   };
 
-  const loadInstallments = async (filter = '') => {
+  const installmentsLoadingRef = useRef(false);
+  const installmentsLoadedRef = useRef(false);
+  
+  const loadInstallments = async (filter = '', force = false) => {
+    // Prevent repeat calls after initial load (unless forced)
+    if (installmentsLoadedRef.current && !force) return;
+    // Prevent concurrent calls
+    if (installmentsLoadingRef.current) return;
+    
+    installmentsLoadingRef.current = true;
     setPlansLoading(true);
-    const res = await api.get(`/installments${filter}`);
-    if (res.success) setInstallments(res.data || []);
-    setPlansLoading(false);
+    try {
+      const res = await api.get(`/installments${filter}`);
+      if (res.success) {
+        setInstallments(res.data || []);
+        installmentsLoadedRef.current = true;
+      }
+    } finally {
+      setPlansLoading(false);
+      installmentsLoadingRef.current = false;
+    }
   };
 
-  const loadPlanSummary = async () => {
+  const loadPlanSummary = async (force = false) => {
+    if (planSummary && !force) return;
     const res = await api.get('/payment-plans/summary');
     if (res.success) setPlanSummary(res.data);
   };
@@ -996,12 +1042,19 @@ const SchoolFinanceApp = () => {
     }
   };
 
-  const loadRoles = async () => {
+  const rolesLoadedRef = useRef(false);
+  
+  const loadRoles = async (force = false) => {
+    if (rolesLoadedRef.current && !force) return;
     const res = await api.get('/roles');
-    if (res.success) setRoles(res.data || []);
+    if (res.success) {
+      setRoles(res.data || []);
+      rolesLoadedRef.current = true;
+    }
   };
 
-  const loadUsersWithRoles = async () => {
+  const loadUsersWithRoles = async (force = false) => {
+    if (usersWithRoles.length > 0 && !force) return;
     const res = await api.get('/users/with-roles');
     if (res.success) setUsersWithRoles(res.data || []);
   };
@@ -5316,14 +5369,28 @@ const SchoolFinanceApp = () => {
     const [studentResults, setStudentResults] = useState([]);
     const [selectedStudent, setSelectedStudent] = useState(null);
 
+    const plansMgmtInitRef = useRef(false);
+    
+    const initRef = useRef(false);
+    const lastFilterRef = useRef('');
+
     useEffect(() => {
+      if (initRef.current) return;
+      initRef.current = true;
+      
       loadPaymentPlans();
       loadInstallments();
       loadPlanSummary();
     }, []);
 
     useEffect(() => {
-      loadInstallments(installmentFilter ? `?${installmentFilter}=true` : '');
+      // Skip if this is the initial mount (already handled above)
+      // or if filter hasn't actually changed
+      const newFilter = installmentFilter ? `?${installmentFilter}=true` : '';
+      if (!initRef.current || lastFilterRef.current === newFilter) return;
+      
+      lastFilterRef.current = newFilter;
+      loadInstallments(newFilter, true); // force=true since user requested filter change
     }, [installmentFilter]);
 
     const searchStudents = async (query) => {
@@ -5357,7 +5424,7 @@ const SchoolFinanceApp = () => {
         return;
       }
 
-      await assignPlanToStudent({
+      const success = await assignPlanToStudent({
         studentId: selectedStudent.id,
         paymentPlanId: assignForm.paymentPlanId,
         customAmount: assignForm.customAmount || null,
@@ -5367,6 +5434,12 @@ const SchoolFinanceApp = () => {
       setShowAssignPlan(false);
       setSelectedStudent(null);
       setAssignForm({ studentId: '', paymentPlanId: '', customAmount: '', dueDates: ['', '', ''] });
+      
+      if (success) {
+        // Reload data after assigning plan
+        loadInstallments('', true);
+        loadPlanSummary(true);
+      }
     };
 
     const handleRecordPayment = async () => {
@@ -5378,6 +5451,9 @@ const SchoolFinanceApp = () => {
       if (success) {
         setSelectedInstallment(null);
         setPaymentAmount('');
+        // Reload data after payment
+        loadInstallments(installmentFilter ? `?${installmentFilter}=true` : '', true);
+        loadPlanSummary(true);
       }
     };
 
@@ -5391,9 +5467,13 @@ const SchoolFinanceApp = () => {
       return styles[status] || 'bg-gray-100 text-gray-700';
     };
 
-    const updatePlanInstallments = (count) => {
+    const updatePlanInstallments = (count, newPaymentPlanId = null) => {
       const newDates = Array(count).fill('');
-      setAssignForm({ ...assignForm, dueDates: newDates });
+      setAssignForm(prev => ({ 
+        ...prev, 
+        dueDates: newDates,
+        ...(newPaymentPlanId !== null && { paymentPlanId: newPaymentPlanId })
+      }));
     };
 
     return (
@@ -5455,9 +5535,21 @@ const SchoolFinanceApp = () => {
                 key={tab.id}
                 onClick={() => {
                   setActiveTab(tab.id);
-                  if (tab.id === 'overdue') setInstallmentFilter('overdue');
-                  else if (tab.id === 'upcoming') setInstallmentFilter('upcoming');
-                  else if (tab.id === 'overview') setInstallmentFilter('');
+                  // Always reload data on tab click
+                  if (tab.id === 'overdue') {
+                    setInstallmentFilter('overdue');
+                    loadInstallments('?overdue=true', true);
+                  } else if (tab.id === 'upcoming') {
+                    setInstallmentFilter('upcoming');
+                    loadInstallments('?upcoming=true', true);
+                  } else if (tab.id === 'overview') {
+                    setInstallmentFilter('');
+                    loadInstallments('', true);
+                  } else if (tab.id === 'plans') {
+                    loadPaymentPlans(true);
+                  }
+                  // Always refresh summary
+                  loadPlanSummary(true);
                 }}
                 className={`flex-1 py-4 px-4 text-sm font-medium transition-colors ${
                   activeTab === tab.id 
@@ -5685,15 +5777,19 @@ const SchoolFinanceApp = () => {
                   <select
                     value={assignForm.paymentPlanId}
                     onChange={(e) => {
-                      const plan = paymentPlans.find(p => p.id === e.target.value);
-                      setAssignForm({ ...assignForm, paymentPlanId: e.target.value });
-                      if (plan) updatePlanInstallments(plan.installments);
+                      const selectedId = e.target.value;
+                      const plan = paymentPlans.find(p => String(p.id) === selectedId);
+                      if (plan) {
+                        updatePlanInstallments(plan.installments, selectedId);
+                      } else {
+                        setAssignForm(prev => ({ ...prev, paymentPlanId: selectedId }));
+                      }
                     }}
                     className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
                   >
                     <option value="">Select a plan...</option>
                     {paymentPlans.map(p => (
-                      <option key={p.id} value={p.id}>{p.name} - {formatCurrency(parseFloat(p.totalAmount))}</option>
+                      <option key={p.id} value={String(p.id)}>{p.name} - {formatCurrency(parseFloat(p.totalAmount))}</option>
                     ))}
                   </select>
                 </div>
@@ -5813,7 +5909,14 @@ const SchoolFinanceApp = () => {
     const [selectedRoleId, setSelectedRoleId] = useState('');
     const [editingRole, setEditingRole] = useState(null);
     
+    const userMgmtInitRef = useRef(false);
+    
+    const userInitRef = useRef(false);
+
     useEffect(() => {
+      if (userInitRef.current) return;
+      userInitRef.current = true;
+      
       loadRoles();
       loadUsersWithRoles();
     }, []);
@@ -6115,9 +6218,22 @@ const SchoolFinanceApp = () => {
       'July', 'August', 'September', 'October', 'November', 'December'
     ];
 
+    const budgetInitRef = useRef(false);
+    const lastBudgetParamsRef = useRef('');
+    
     useEffect(() => {
-      loadBudgets(selectedYear, selectedMonth, selectedPeriod);
-      loadBudgetSummary(selectedYear, selectedMonth);
+      const paramsKey = `${selectedYear}-${selectedMonth}-${selectedPeriod}`;
+      const isParamChange = lastBudgetParamsRef.current !== '' && lastBudgetParamsRef.current !== paramsKey;
+      
+      // Skip if same params (prevents loops) 
+      if (budgetInitRef.current && lastBudgetParamsRef.current === paramsKey) return;
+      
+      budgetInitRef.current = true;
+      lastBudgetParamsRef.current = paramsKey;
+      
+      // Force reload if user changed params, otherwise normal load
+      loadBudgets(selectedYear, selectedMonth, selectedPeriod, isParamChange);
+      loadBudgetSummary(selectedYear, selectedMonth, isParamChange);
     }, [selectedYear, selectedMonth, selectedPeriod]);
 
     const initializeBudgetInputs = () => {
