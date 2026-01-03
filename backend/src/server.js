@@ -3,12 +3,21 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const path = require('path');
+const fs = require('fs');
 const routes = require('./routes');
 const logger = require('./utils/logger');
 const prisma = require('./config/prisma');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// Ensure receipts directory exists
+const receiptsDir = path.join(__dirname, 'public/receipts');
+if (!fs.existsSync(receiptsDir)) {
+  fs.mkdirSync(receiptsDir, { recursive: true });
+  logger.info('📁 Created receipts directory');
+}
 
 // Security middleware - configure helmet to not interfere with CORS
 app.use(helmet({
@@ -63,6 +72,16 @@ app.options('*', cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Serve static files for PDF receipts (publicly accessible)
+app.use('/receipts', express.static(receiptsDir, {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.pdf')) {
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'inline');
+    }
+  }
+}));
+
 // Request logging
 app.use((req, res, next) => {
   logger.info(`${req.method} ${req.path}`);
@@ -96,6 +115,7 @@ const server = app.listen(PORT, () => {
   logger.info(`🚀 QM Finance API running on port ${PORT}`);
   logger.info(`📚 Environment: ${process.env.NODE_ENV || 'development'}`);
   logger.info(`🌐 Allowed origins: ${allowedOrigins.join(', ')}`);
+  logger.info(`📄 Receipts served from: /receipts`);
 });
 
 // Graceful shutdown

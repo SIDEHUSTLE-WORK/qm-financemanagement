@@ -392,6 +392,7 @@ model PaymentPlan {
 
   school       School               @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   studentPlans StudentPaymentPlan[]
+  pdfUrl       String?
 
   @@index([schoolId])
   @@map("payment_plans")

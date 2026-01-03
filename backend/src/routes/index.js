@@ -1,5 +1,9 @@
 const express = require('express');
 const router = express.Router();
+const path = require('path');
+const fs = require('fs');
+const PDFDocument = require('pdfkit');
+const QRCode = require('qrcode');
 
 // Import controllers
 const authController = require('../controllers/authController');
@@ -20,6 +24,12 @@ const { loginValidation, incomeValidation, expenseValidation, studentValidation,
 
 // Import Prisma for dashboard
 const prisma = require('../config/prisma');
+
+// Receipts directory
+const receiptsDir = path.join(__dirname, '../public/receipts');
+if (!fs.existsSync(receiptsDir)) {
+  fs.mkdirSync(receiptsDir, { recursive: true });
+}
 
 // ==================== AUTH ROUTES ====================
 router.post('/auth/login', 
@@ -106,6 +116,345 @@ router.post('/sms/send-bulk', authenticate, checkPermission('income', 'create'),
 router.get('/sms/history', authenticate, smsController.getHistory);
 router.get('/sms/stats', authenticate, smsController.getStats);
 router.get('/sms/defaulters', authenticate, smsController.getDefaulters);
+
+// ==================== WHATSAPP ROUTES ====================
+
+// Generate PDF Receipt and return URL
+router.post('/whatsapp/generate-receipt-pdf/:paymentId', authenticate, async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+    const schoolId = req.user.schoolId;
+
+    // Get payment with student info
+    const payment = await prisma.income.findFirst({
+      where: { id: paymentId, schoolId },
+      include: {
+        student: {
+          include: { class: true }
+        },
+        category: true
+      }
+    });
+
+    if (!payment) {
+      return res.json({ success: false, message: 'Payment not found' });
+    }
+
+    const school = await prisma.school.findUnique({ where: { id: schoolId } });
+
+    // Generate unique filename
+    const safeReceiptNumber = payment.receiptNumber.replace(/[\/\\:*?"<>|]/g, '-');
+    const filename = `receipt_${safeReceiptNumber}_${Date.now()}.pdf`;
+    const filepath = path.join(receiptsDir, filename);
+    const baseUrl = process.env.BASE_URL || 'https://qm-financemanagement-production.up.railway.app';
+    const publicUrl = `${baseUrl}/receipts/${filename}`;
+
+    // Create PDF
+    const doc = new PDFDocument({ size: 'A6', margin: 20 });
+    const writeStream = fs.createWriteStream(filepath);
+    doc.pipe(writeStream);
+
+    // Header
+    doc.fontSize(14).font('Helvetica-Bold')
+       .text(school?.name || 'QUEEN MOTHER JUNIOR SCHOOL', { align: 'center' });
+    doc.fontSize(8).font('Helvetica')
+       .text(school?.address || 'Namasuba Kikajjo, Kampala, Uganda', { align: 'center' })
+       .text(`Tel: ${school?.phone || '0200 939 322'}`, { align: 'center' });
+    
+    doc.moveDown(0.5);
+    
+    // Receipt Title
+    doc.fontSize(12).font('Helvetica-Bold')
+       .fillColor('#059669')
+       .text('PAYMENT RECEIPT', { align: 'center' });
+    
+    doc.moveDown(0.5);
+    doc.fillColor('#000000');
+
+    // Receipt Details
+    doc.fontSize(9).font('Helvetica-Bold').text('Receipt No: ', { continued: true })
+       .font('Helvetica').text(payment.receiptNumber);
+    
+    doc.font('Helvetica-Bold').text('Date: ', { continued: true })
+       .font('Helvetica').text(new Date(payment.date || payment.createdAt).toLocaleDateString('en-GB'));
+    
+    doc.moveDown(0.3);
+    
+    if (payment.student) {
+      doc.font('Helvetica-Bold').text('Student: ', { continued: true })
+         .font('Helvetica').text(`${payment.student.firstName} ${payment.student.lastName}`);
+      
+      doc.font('Helvetica-Bold').text('Class: ', { continued: true })
+         .font('Helvetica').text(payment.student.class?.name || 'N/A');
+      
+      doc.font('Helvetica-Bold').text('Student No: ', { continued: true })
+         .font('Helvetica').text(payment.student.studentNumber || 'N/A');
+    }
+
+    if (payment.category) {
+      doc.font('Helvetica-Bold').text('Category: ', { continued: true })
+         .font('Helvetica').text(payment.category.name);
+    }
+
+    doc.moveDown(0.5);
+
+    // Amount Box
+    const amountBoxY = doc.y;
+    doc.rect(20, amountBoxY, doc.page.width - 40, 40).fill('#059669');
+    doc.fillColor('#FFFFFF').fontSize(10).font('Helvetica-Bold')
+       .text('AMOUNT PAID', 20, amountBoxY + 5, { align: 'center' });
+    doc.fontSize(16)
+       .text(`UGX ${Number(payment.amount).toLocaleString()}`, 20, amountBoxY + 20, { align: 'center' });
+    
+    doc.fillColor('#000000');
+    doc.y = amountBoxY + 50;
+
+    // Payment Method
+    doc.fontSize(9).font('Helvetica-Bold').text('Payment Method: ', { continued: true })
+       .font('Helvetica').text((payment.paymentMethod || 'CASH').replace('_', ' ').toUpperCase());
+
+    // Description
+    if (payment.description) {
+      doc.font('Helvetica-Bold').text('Description: ', { continued: true })
+         .font('Helvetica').text(payment.description);
+    }
+
+    doc.moveDown(0.5);
+
+    // QR Code for verification
+    const verifyUrl = `${baseUrl}/api/verify/${encodeURIComponent(payment.receiptNumber)}`;
+    try {
+      const qrDataUrl = await QRCode.toDataURL(verifyUrl, { width: 80, margin: 1 });
+      const qrBuffer = Buffer.from(qrDataUrl.split(',')[1], 'base64');
+      doc.image(qrBuffer, (doc.page.width - 60) / 2, doc.y, { width: 60 });
+      doc.moveDown(4);
+      doc.fontSize(6).text('Scan to verify receipt', { align: 'center' });
+    } catch (qrError) {
+      console.error('QR generation error:', qrError);
+    }
+
+    // Footer
+    doc.moveDown(0.5);
+    doc.fontSize(7).font('Helvetica')
+       .text('Thank you for your payment!', { align: 'center' })
+       .text(`Generated: ${new Date().toLocaleString()}`, { align: 'center' });
+
+    doc.end();
+
+    // Wait for PDF to finish writing
+    await new Promise((resolve, reject) => {
+      writeStream.on('finish', resolve);
+      writeStream.on('error', reject);
+    });
+
+    // Get parent phone
+    const phone = payment.student?.parentPhone || payment.student?.parentPhoneAlt || null;
+
+    res.json({
+      success: true,
+      data: {
+        url: publicUrl,
+        filename,
+        receiptNumber: payment.receiptNumber,
+        studentName: payment.student ? `${payment.student.firstName} ${payment.student.lastName}` : 'N/A',
+        amount: payment.amount,
+        phone
+      }
+    });
+
+  } catch (error) {
+    console.error('Generate PDF error:', error);
+    res.json({ success: false, message: error.message });
+  }
+});
+
+// Get WhatsApp link for receipt
+router.get('/whatsapp/receipt-link/:paymentId', authenticate, async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+    const schoolId = req.user.schoolId;
+
+    const payment = await prisma.income.findFirst({
+      where: { id: paymentId, schoolId },
+      include: {
+        student: { include: { class: true } }
+      }
+    });
+
+    if (!payment) {
+      return res.json({ success: false, message: 'Payment not found' });
+    }
+
+    const school = await prisma.school.findUnique({ where: { id: schoolId } });
+    const studentName = payment.student ? `${payment.student.firstName} ${payment.student.lastName}` : 'N/A';
+    const phone = payment.student?.parentPhone || payment.student?.parentPhoneAlt;
+    const formattedPhone = phone ? phone.replace(/^0/, '256').replace(/[^0-9]/g, '') : null;
+
+    // Generate message
+    const message = `🏫 *${school?.name || 'QUEEN MOTHER JUNIOR SCHOOL'}*\n\n` +
+      `✅ *PAYMENT RECEIPT*\n\n` +
+      `📄 Receipt No: ${payment.receiptNumber}\n` +
+      `👤 Student: ${studentName}\n` +
+      `📚 Class: ${payment.student?.class?.name || 'N/A'}\n` +
+      `💰 Amount: UGX ${Number(payment.amount).toLocaleString()}\n` +
+      `📅 Date: ${new Date(payment.date || payment.createdAt).toLocaleDateString('en-GB')}\n\n` +
+      `Thank you for your payment! 🙏`;
+
+    const whatsappUrl = formattedPhone 
+      ? `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`
+      : `https://wa.me/?text=${encodeURIComponent(message)}`;
+
+    res.json({
+      success: true,
+      data: {
+        whatsappUrl,
+        message,
+        phone: formattedPhone,
+        studentName,
+        receiptNumber: payment.receiptNumber
+      }
+    });
+
+  } catch (error) {
+    console.error('WhatsApp link error:', error);
+    res.json({ success: false, message: error.message });
+  }
+});
+
+// Get WhatsApp reminder link for student
+router.post('/whatsapp/reminder-link', authenticate, async (req, res) => {
+  try {
+    const { studentId, customMessage } = req.body;
+    const schoolId = req.user.schoolId;
+
+    const student = await prisma.student.findFirst({
+      where: { id: studentId, schoolId },
+      include: { class: true }
+    });
+
+    if (!student) {
+      return res.json({ success: false, message: 'Student not found' });
+    }
+
+    const school = await prisma.school.findUnique({ where: { id: schoolId } });
+
+    // Calculate balance
+    const feeStructure = await prisma.feeStructure.findFirst({
+      where: { classId: student.classId, isActive: true }
+    });
+    const totalFees = feeStructure ? Number(feeStructure.amount) : 0;
+    
+    const payments = await prisma.income.aggregate({
+      where: { studentId, schoolId, isVoided: false },
+      _sum: { amount: true }
+    });
+    const totalPaid = payments._sum.amount ? Number(payments._sum.amount) : 0;
+    const balance = totalFees - totalPaid;
+
+    const phone = student.parentPhone || student.parentPhoneAlt;
+    const formattedPhone = phone ? phone.replace(/^0/, '256').replace(/[^0-9]/g, '') : null;
+    const studentName = `${student.firstName} ${student.lastName}`;
+    
+    // Default or custom message
+    const message = customMessage || 
+      `🏫 *${school?.name || 'QUEEN MOTHER JUNIOR SCHOOL'}*\n\n` +
+      `Dear Parent/Guardian,\n\n` +
+      `This is a friendly reminder regarding school fees for:\n\n` +
+      `👤 Student: ${studentName}\n` +
+      `📚 Class: ${student.class?.name || 'N/A'}\n` +
+      `💰 Outstanding Balance: *UGX ${balance.toLocaleString()}*\n\n` +
+      `Kindly clear the balance at your earliest convenience.\n\n` +
+      `For inquiries, contact: ${school?.phone || '0200 939 322'}\n\n` +
+      `Thank you! 🙏`;
+
+    const whatsappUrl = formattedPhone 
+      ? `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`
+      : `https://wa.me/?text=${encodeURIComponent(message)}`;
+
+    res.json({
+      success: true,
+      data: {
+        whatsappUrl,
+        message,
+        phone: formattedPhone,
+        studentName,
+        balance
+      }
+    });
+
+  } catch (error) {
+    console.error('WhatsApp reminder error:', error);
+    res.json({ success: false, message: error.message });
+  }
+});
+
+// Bulk WhatsApp reminders (returns list of links)
+router.post('/whatsapp/bulk-reminder-links', authenticate, async (req, res) => {
+  try {
+    const { studentIds, customMessage } = req.body;
+    const schoolId = req.user.schoolId;
+
+    if (!studentIds || !Array.isArray(studentIds) || studentIds.length === 0) {
+      return res.json({ success: false, message: 'No students selected' });
+    }
+
+    const school = await prisma.school.findUnique({ where: { id: schoolId } });
+
+    const students = await prisma.student.findMany({
+      where: { id: { in: studentIds }, schoolId },
+      include: { class: true }
+    });
+
+    const links = [];
+
+    for (const student of students) {
+      // Calculate balance
+      const feeStructure = await prisma.feeStructure.findFirst({
+        where: { classId: student.classId, isActive: true }
+      });
+      const totalFees = feeStructure ? Number(feeStructure.amount) : 0;
+      
+      const payments = await prisma.income.aggregate({
+        where: { studentId: student.id, schoolId, isVoided: false },
+        _sum: { amount: true }
+      });
+      const totalPaid = payments._sum.amount ? Number(payments._sum.amount) : 0;
+      const balance = totalFees - totalPaid;
+
+      const phone = student.parentPhone || student.parentPhoneAlt;
+      if (!phone) continue;
+
+      const formattedPhone = phone.replace(/^0/, '256').replace(/[^0-9]/g, '');
+      const studentName = `${student.firstName} ${student.lastName}`;
+
+      const message = customMessage
+        ? customMessage
+            .replace(/{student}/g, studentName)
+            .replace(/{balance}/g, `UGX ${balance.toLocaleString()}`)
+            .replace(/{class}/g, student.class?.name || 'N/A')
+        : `🏫 ${school?.name || 'QMJS'}: Dear Parent, ${studentName} has an outstanding balance of UGX ${balance.toLocaleString()}. Kindly clear fees. Contact: ${school?.phone || '0200939322'}`;
+
+      links.push({
+        studentId: student.id,
+        studentName,
+        phone: formattedPhone,
+        balance,
+        whatsappUrl: `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`,
+        message
+      });
+    }
+
+    res.json({
+      success: true,
+      data: links,
+      count: links.length
+    });
+
+  } catch (error) {
+    console.error('Bulk WhatsApp error:', error);
+    res.json({ success: false, message: error.message });
+  }
+});
 
 // ==================== REPORT ROUTES ====================
 router.get('/reports', authenticate, checkPermission('reports', 'read'), reportController.getAll);
@@ -379,9 +728,6 @@ router.post('/email/send-reminder', authenticate, emailController.sendFeeReminde
 router.post('/email/test', authenticate, emailController.testEmailConfig);
 router.get('/email/settings', authenticate, emailController.getEmailSettings);
 router.post('/email/settings', authenticate, emailController.saveEmailSettings);
-
-
-
 
 // ==================== HEALTH CHECK ====================
 router.get('/health', (req, res) => {
