@@ -5733,7 +5733,6 @@ const SchoolFinanceApp = () => {
     const [activeTab, setActiveTab] = useState('overview');
     const [showCreatePlan, setShowCreatePlan] = useState(false);
     const [showAssignPlan, setShowAssignPlan] = useState(false);
-    const [installmentFilter, setInstallmentFilter] = useState('');
     const [selectedInstallment, setSelectedInstallment] = useState(null);
     const [paymentAmount, setPaymentAmount] = useState('');
     
@@ -5753,11 +5752,9 @@ const SchoolFinanceApp = () => {
     const [studentResults, setStudentResults] = useState([]);
     const [selectedStudent, setSelectedStudent] = useState(null);
 
-    const plansMgmtInitRef = useRef(false);
-    
     const initRef = useRef(false);
-    const lastFilterRef = useRef('');
 
+    // Only runs once on mount
     useEffect(() => {
       if (initRef.current) return;
       initRef.current = true;
@@ -5767,15 +5764,7 @@ const SchoolFinanceApp = () => {
       loadPlanSummary();
     }, []);
 
-    useEffect(() => {
-      // Skip if this is the initial mount (already handled above)
-      // or if filter hasn't actually changed
-      const newFilter = installmentFilter ? `?${installmentFilter}=true` : '';
-      if (!initRef.current || lastFilterRef.current === newFilter) return;
-      
-      lastFilterRef.current = newFilter;
-      loadInstallments(newFilter, true); // force=true since user requested filter change
-    }, [installmentFilter]);
+    // NO second useEffect - removed completely
 
     const searchStudents = async (query) => {
       if (query.length < 2) { setStudentResults([]); return; }
@@ -5820,12 +5809,10 @@ const SchoolFinanceApp = () => {
       setAssignForm({ studentId: '', paymentPlanId: '', customAmount: '', dueDates: ['', '', ''] });
       
       if (success) {
-        // Reload data after assigning plan
         loadInstallments('', true);
         loadPlanSummary(true);
       }
     };
-
     const handleRecordPayment = async () => {
       if (!paymentAmount || parseFloat(paymentAmount) <= 0) {
         alert('Enter valid amount');
@@ -5918,46 +5905,43 @@ const SchoolFinanceApp = () => {
               <button
                 key={tab.id}
                 onClick={() => {
-                  setActiveTab(tab.id);
-                  // Always reload data on tab click
-                  if (tab.id === 'overdue') {
-                    setInstallmentFilter('overdue');
-                    loadInstallments('?overdue=true', true);
-                  } else if (tab.id === 'upcoming') {
-                    setInstallmentFilter('upcoming');
-                    loadInstallments('?upcoming=true', true);
-                  } else if (tab.id === 'overview') {
-                    setInstallmentFilter('');
-                    loadInstallments('', true);
-                  } else if (tab.id === 'plans') {
-                    loadPaymentPlans(true);
-                  }
-                  // Always refresh summary
-                  loadPlanSummary(true);
-                }}
-                className={`flex-1 py-4 px-4 text-sm font-medium transition-colors ${
-                  activeTab === tab.id 
-                    ? darkMode ? 'bg-gray-700 text-blue-400 border-b-2 border-blue-400' : 'bg-blue-50 text-blue-600 border-b-2 border-blue-600'
-                    : darkMode ? 'text-gray-400 hover:bg-gray-700' : 'text-gray-600 hover:bg-gray-50'
-                }`}
+                console.log('CLICKED:', tab.id);
+                setActiveTab(tab.id);
+
+                if (tab.id === 'overdue') {
+                  loadInstallments('?overdue=true', true);
+                } else if (tab.id === 'upcoming') {
+                  loadInstallments('?upcoming=true', true);
+                } else if (tab.id === 'overview') {
+                  loadInstallments('', true);
+                }
+                
+              }}
+              className={`flex-1 py-4 px-4 text-sm font-medium transition-colors ${
+                activeTab === tab.id 
+                  ? darkMode ? 'bg-gray-700 text-blue-400 border-b-2 border-blue-400' : 'bg-blue-50 text-blue-600 border-b-2 border-blue-600'
+                  : darkMode ? 'text-gray-400 hover:bg-gray-700' : 'text-gray-600 hover:bg-gray-50'
+              }`}
               >
                 {tab.label}
               </button>
-            ))}
-          </div>
+              ))}
+              </div>
 
-          {activeTab !== 'plans' && (
-            <div className="p-6">
-              {plansLoading ? (
-                <div className="text-center py-8">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-                </div>
-              ) : installments.length === 0 ? (
-                <div className="text-center py-12">
-                  <div className="text-6xl mb-4">📋</div>
-                  <p className={`${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>No installments found</p>
-                </div>
-              ) : (
+              {console.log('RENDERING - activeTab is:', activeTab)}
+
+              {activeTab !== 'plans' && (
+                <div className="p-6">
+                  {plansLoading ? (
+                    <div className="text-center py-8">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                    </div>
+                  ) : installments.length === 0 ? (
+                    <div className="text-center py-12">
+                      <div className="text-6xl mb-4">📋</div>
+                      <p className={`${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>No installments found</p>
+                    </div>
+                            ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
@@ -6375,7 +6359,13 @@ const SchoolFinanceApp = () => {
             ].map(tab => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => {
+                  setActiveTab(tab.id);
+                  if (tab.id === 'overdue') loadInstallments('?overdue=true', true);
+                  else if (tab.id === 'upcoming') loadInstallments('?upcoming=true', true);
+                  else if (tab.id === 'overview') loadInstallments('', true);
+                  else if (tab.id === 'plans') loadPaymentPlans(true);
+                }}
                 className={`flex-1 py-4 px-4 text-sm font-medium transition-colors ${
                   activeTab === tab.id 
                     ? darkMode ? 'bg-gray-700 text-blue-400 border-b-2 border-blue-400' : 'bg-blue-50 text-blue-600 border-b-2 border-blue-600'
