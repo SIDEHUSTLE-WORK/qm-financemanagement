@@ -10,13 +10,18 @@ const prisma = require('./config/prisma');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Security middleware
-app.use(helmet());
+// Security middleware - configure helmet to not interfere with CORS
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" }
+}));
 
 // CORS configuration - handle multiple origins
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:3000',
   'https://qm-financemanagement-9pap.vercel.app'
 ];
 
@@ -30,22 +35,29 @@ if (process.env.FRONTEND_URL) {
   });
 }
 
+// CORS middleware
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, curl, etc.)
+    // Allow requests with no origin (mobile apps, curl, Postman, etc.)
     if (!origin) return callback(null, true);
     
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      logger.warn(`CORS blocked origin: ${origin}`);
-      callback(null, true); // Allow anyway in case of dynamic origins
+      // Log but still allow for dynamic origins during development
+      logger.warn(`CORS request from unlisted origin: ${origin}`);
+      callback(null, true);
     }
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  maxAge: 86400 // Cache preflight for 24 hours
 }));
+
+// Handle preflight requests explicitly
+app.options('*', cors());
 
 // Body parsing
 app.use(express.json({ limit: '10mb' }));

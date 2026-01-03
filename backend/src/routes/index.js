@@ -11,6 +11,7 @@ const smsController = require('../controllers/smsController');
 const budgetController = require('../controllers/budgetController');
 const paymentPlanController = require('../controllers/paymentPlanController');
 const permissionController = require('../controllers/permissionController');
+const emailController = require('../controllers/emailController');
 const { getAuditLogs } = require('../middleware/audit');
 
 // Import middleware
@@ -371,6 +372,16 @@ router.get('/verify/:receiptNumber', async (req, res) => {
     });
   }
 });
+
+// ==================== EMAIL ROUTES ====================
+router.post('/email/send-receipt', authenticate, emailController.sendReceiptEmail);
+router.post('/email/send-reminder', authenticate, emailController.sendFeeReminderEmail);
+router.post('/email/test', authenticate, emailController.testEmailConfig);
+router.get('/email/settings', authenticate, emailController.getEmailSettings);
+router.post('/email/settings', authenticate, emailController.saveEmailSettings);
+
+
+
 
 // ==================== HEALTH CHECK ====================
 router.get('/health', (req, res) => {
