@@ -3351,7 +3351,8 @@ const SchoolFinanceApp = () => {
     };
     
     const getReportData = () => {
-      let filteredIncome = incomeEntries.filter(e => e.category !== 'Old Balance');
+      // Exclude Old Balance AND School Fees Collection entries (those with studentId)
+      let filteredIncome = incomeEntries.filter(e => e.category !== 'Old Balance' && !e.studentId);
       let filteredExpenses = expenseEntries;
       let reportTitle = '';
       let dateRangeStr = '';
