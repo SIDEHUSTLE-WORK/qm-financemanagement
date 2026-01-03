@@ -6,11 +6,9 @@
   },
   "files": [
     "dist/**/*",
-    "src/**/*",
-    "node_modules/**/*"
-  ],
-  "asarUnpack": [
-    "node_modules/better-sqlite3/**/*"
+    "public/electron.js",
+    "public/icon.png",
+    "package.json"
   ],
   "mac": {
     "target": ["dmg"],

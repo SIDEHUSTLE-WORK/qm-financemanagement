@@ -13,6 +13,7 @@
     "electron:build:mac": "vite build && electron-builder --mac"
   },
   "dependencies": {
+    "electron-is-dev": "^3.0.1",
     "jspdf": "^2.5.2",
     "jspdf-autotable": "^3.8.4",
     "lucide-react": "^0.468.0",
