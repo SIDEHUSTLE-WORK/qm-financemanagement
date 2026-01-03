@@ -588,6 +588,9 @@ const SchoolFinanceApp = () => {
   const [roles, setRoles] = useState([]);
   const [usersWithRoles, setUsersWithRoles] = useState([]);
   
+  // Email Receipt Modal State
+  const [emailReceiptModal, setEmailReceiptModal] = useState(null);
+  
   const [darkMode, setDarkMode] = useState(() => {
     const saved = localStorage.getItem('qm_dark_mode');
     return saved === 'true';
@@ -5805,8 +5808,8 @@ const SchoolFinanceApp = () => {
 // User & Role Management Component
   const UserManagement = () => {
     const [activeTab, setActiveTab] = useState('users');
-    const [emailReceiptModal, setEmailReceiptModal] = useState(null);
     const [showAssignRole, setShowAssignRole] = useState(null);
+    
     const [selectedRoleId, setSelectedRoleId] = useState('');
     const [editingRole, setEditingRole] = useState(null);
     
