@@ -5,6 +5,7 @@ import 'jspdf-autotable';
 import QRCode from 'qrcode/lib/browser';
 
 
+
  // ==================== API CONFIGURATION ====================
 const API_URL = 'https://qm-financemanagement-production.up.railway.app/api';
 
@@ -934,6 +935,42 @@ const SchoolFinanceApp = () => {
       return true;
     }
     alert(res.message || 'Failed to record payment');
+    return false;
+  };
+
+  // ==================== EMAIL FUNCTIONS ====================
+  const sendReceiptEmail = async (receiptId, email) => {
+    const res = await api.post('/email/send-receipt', { receiptId, email });
+    if (res.success) {
+      alert(res.message);
+      return true;
+    }
+    alert(res.message || 'Failed to send email');
+    return false;
+  };
+
+  const getEmailSettings = async () => {
+    const res = await api.get('/email/settings');
+    return res.success ? res.data : null;
+  };
+
+  const saveEmailSettings = async (settings) => {
+    const res = await api.post('/email/settings', settings);
+    if (res.success) {
+      alert('Email settings saved!');
+      return true;
+    }
+    alert(res.message || 'Failed to save settings');
+    return false;
+  };
+
+  const testEmailConfig = async (testEmail) => {
+    const res = await api.post('/email/test', { testEmail });
+    if (res.success) {
+      alert(res.message);
+      return true;
+    }
+    alert(res.message || 'Email test failed');
     return false;
   };
 
@@ -2196,13 +2233,20 @@ const SchoolFinanceApp = () => {
                             <td className="py-3 px-4 text-sm text-gray-600">{payment.paymentMethod}</td>
                             <td className="py-3 px-4 text-sm text-green-600 font-bold text-right">{formatCurrency(payment.amount)}</td>
                             <td className="py-3 px-4 text-center">
-                              <button
-                                onClick={() => printReceipt(payment)}
-                                className="text-purple-600 hover:text-purple-700"
-                                title="Print Receipt"
-                              >
-                                <Printer className="w-4 h-4" />
-                              </button>
+                             <button
+                              onClick={() => printReceipt(entry)}
+                              className="text-purple-600 hover:text-purple-700"
+                              title="Print Receipt"
+                            >
+                              <Printer className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => setEmailReceiptModal(entry)}
+                              className="text-blue-600 hover:text-blue-700"
+                              title="Email Receipt"
+                            >
+                              <Mail className="w-4 h-4" />
+                            </button>
                             </td>
                           </tr>
                         ))
@@ -5761,10 +5805,11 @@ const SchoolFinanceApp = () => {
 // User & Role Management Component
   const UserManagement = () => {
     const [activeTab, setActiveTab] = useState('users');
+    const [emailReceiptModal, setEmailReceiptModal] = useState(null);
     const [showAssignRole, setShowAssignRole] = useState(null);
     const [selectedRoleId, setSelectedRoleId] = useState('');
     const [editingRole, setEditingRole] = useState(null);
-
+    
     useEffect(() => {
       loadRoles();
       loadUsersWithRoles();
@@ -6420,6 +6465,84 @@ const SchoolFinanceApp = () => {
       </div>
     );
   };
+
+
+
+// Email Receipt Modal Component
+  const EmailReceiptModal = ({ receipt, onClose }) => {
+    const [email, setEmail] = useState(receipt?.student?.parentEmail || '');
+    const [sending, setSending] = useState(false);
+
+    const handleSend = async () => {
+      if (!email) {
+        alert('Please enter an email address');
+        return;
+      }
+      setSending(true);
+      const success = await sendReceiptEmail(receipt.id, email);
+      setSending(false);
+      if (success) onClose();
+    };
+
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className={`rounded-xl shadow-xl p-6 max-w-md w-full mx-4 ${darkMode ? 'bg-gray-800' : 'bg-white'}`}>
+          <h3 className={`text-xl font-bold mb-4 ${darkMode ? 'text-white' : 'text-gray-800'}`}>
+            📧 Email Receipt
+          </h3>
+          
+          <div className={`p-3 rounded-lg mb-4 ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
+            <p className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+              Receipt: <span className="font-bold">{receipt?.receiptNumber}</span>
+            </p>
+            <p className={`text-sm ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
+              Amount: <span className="font-bold text-green-600">UGX {receipt?.amount?.toLocaleString()}</span>
+            </p>
+          </div>
+
+          <div className="mb-4">
+            <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+              Send to Email
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="parent@email.com"
+              className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none ${darkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
+            />
+          </div>
+
+          <div className="flex gap-3">
+            <button 
+              onClick={handleSend} 
+              disabled={sending}
+              className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white px-6 py-2 rounded-lg font-medium flex items-center justify-center gap-2"
+            >
+              {sending ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  Sending...
+                </>
+              ) : (
+                <>
+                  <Mail className="w-4 h-4" />
+                  Send Email
+                </>
+              )}
+            </button>
+            <button 
+              onClick={onClose} 
+              className={`flex-1 px-6 py-2 rounded-lg font-medium ${darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-300 text-gray-800'}`}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // Settings Component
   const Settings = () => {
     const [localSchoolName, setLocalSchoolName] = useState('QUEEN MOTHER JUNIOR SCHOOL');
@@ -6942,7 +7065,83 @@ const SchoolFinanceApp = () => {
             ))}
           </div>
         </div>
-  
+           
+
+           {/* Email Settings Section */}
+        <div className="bg-white rounded-xl shadow-md p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <Mail className="w-6 h-6 text-blue-600" />
+            <h3 className="text-xl font-bold text-gray-800">Email Settings (SMTP)</h3>
+          </div>
+          <p className="text-gray-600 mb-4">
+            Configure email settings to send receipts to parents via email.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">SMTP Host</label>
+              <input
+                type="text"
+                placeholder="smtp.gmail.com"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">SMTP Port</label>
+              <input
+                type="text"
+                placeholder="587"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">SMTP Username</label>
+              <input
+                type="text"
+                placeholder="your@email.com"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">SMTP Password</label>
+              <input
+                type="password"
+                placeholder="••••••••"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">From Email</label>
+              <input
+                type="email"
+                placeholder="noreply@school.com"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">From Name</label>
+              <input
+                type="text"
+                placeholder="School Name"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              />
+            </div>
+          </div>
+          <div className="flex gap-3 mt-4">
+            <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium">
+              Save Email Settings
+            </button>
+            <button className="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-lg font-medium">
+              Send Test Email
+            </button>
+          </div>
+          <div className="mt-4 p-4 bg-blue-50 rounded-lg">
+            <p className="text-sm text-blue-800">
+              <strong>Gmail Users:</strong> Use an "App Password" instead of your regular password. 
+              Generate one in Google Account → Security → 2-Step Verification → App passwords.
+            </p>
+          </div>
+        </div>
+
         {/* Save Settings Button */}
         <div className="flex justify-end">
           <button
@@ -7078,7 +7277,15 @@ const SchoolFinanceApp = () => {
   formatCurrency={formatCurrency} smsTemplates={smsTemplates}
 />}
   {currentView === 'settings' && <Settings />}
-</main>
+    </main>
+
+    {/* Email Receipt Modal */}
+    {emailReceiptModal && (
+      <EmailReceiptModal 
+        receipt={emailReceiptModal} 
+        onClose={() => setEmailReceiptModal(null)} 
+      />
+    )}
     </div>
   );
 };
